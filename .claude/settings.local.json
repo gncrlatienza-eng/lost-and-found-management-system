@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat \"C:/Users/Gio/Lost-and-Found-System/LAFMS/app/\\(admin\\)/found-items.tsx\")",
+      "Bash(ls -la /c/Users/Gio/Lost-and-Found-System/LAFMS/app/\\\\\\(student\\\\\\)/ 2>/dev/null)",
+      "Bash(find /c/Users/Gio/Lost-and-Found-System/LAFMS -maxdepth 2 -name \"*.ts\" -type f 2>/dev/null | grep -v node_modules)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
