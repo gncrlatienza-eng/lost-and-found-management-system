@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, FlatList, Keyboard,
+  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, FlatList, Keyboard, Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -27,7 +27,8 @@ export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const isEdit = !!id;
   const scrollRef = useRef<ScrollView>(null);
-  const sectionOffsets = useRef<Record<string, number>>({});
+  const scrollOffset = useRef(0);
+  const sectionRefs = useRef<Record<string, View | null>>({});
   const focusedSection = useRef<string | null>(null);
 
   const [name, setName] = useState('');
@@ -87,11 +88,12 @@ export default function PostScreen() {
 
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      const nextKeyboardHeight = event.endCoordinates.height;
       setKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates.height);
+      setKeyboardHeight(nextKeyboardHeight);
 
       if (focusedSection.current) {
-        scrollToSection(focusedSection.current, true);
+        scrollToSection(focusedSection.current, nextKeyboardHeight);
       }
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
@@ -116,13 +118,33 @@ export default function PostScreen() {
   const clearError = (field: string) =>
     setErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
 
-  const scrollToSection = (section: string, keyboardReady = false) => {
+  const scrollToSection = (section: string, keyboardHeightOverride?: number) => {
     focusedSection.current = section;
-    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
-    const targetY = Math.max(0, (sectionOffsets.current[section] ?? 0) - topOffset);
+    const activeKeyboardHeight = keyboardHeightOverride ?? keyboardHeight;
+    if (activeKeyboardHeight <= 0) return;
+
+    const sectionRef = sectionRefs.current[section];
+    if (!sectionRef) return;
+
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: targetY, animated: true });
-    }, keyboardReady ? 60 : 180);
+      sectionRef.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get('window').height - activeKeyboardHeight;
+        const topLimit = insets.top + Spacing.sm;
+        const bottomLimit = keyboardTop - Spacing.sm;
+        const sectionBottom = y + height;
+        let targetY = scrollOffset.current;
+
+        if (sectionBottom > bottomLimit) {
+          targetY += sectionBottom - bottomLimit;
+        } else if (y < topLimit) {
+          targetY = Math.max(0, targetY - (topLimit - y));
+        }
+
+        if (Math.abs(targetY - scrollOffset.current) > 1) {
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
+        }
+      });
+    }, keyboardHeightOverride ? 60 : 0);
   };
 
   // Build a Date from the fields, returns null if invalid
@@ -283,14 +305,15 @@ export default function PostScreen() {
             ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          onScroll={(event) => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
         >
 
           {/* Item Name */}
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.name = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.name = ref; }}
+            collapsable={false}
           >
             <Text style={[s.label, { color: colors.text }]}>Item Name <Text style={{ color: colors.error }}>*</Text></Text>
             <TextInput
@@ -327,9 +350,8 @@ export default function PostScreen() {
           {/* Description */}
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.description = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.description = ref; }}
+            collapsable={false}
           >
             <Text style={[s.label, { color: colors.text }]}>Description <Text style={{ color: colors.error }}>*</Text></Text>
             <TextInput
@@ -347,9 +369,8 @@ export default function PostScreen() {
           {/* Location */}
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.location = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.location = ref; }}
+            collapsable={false}
           >
             <Text style={[s.label, { color: colors.text }]}>Location Lost <Text style={{ color: colors.error }}>*</Text></Text>
             <TextInput
@@ -366,9 +387,8 @@ export default function PostScreen() {
           {/* Date */}
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.date = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.date = ref; }}
+            collapsable={false}
           >
             <Text style={[s.label, { color: colors.text }]}>Date Lost <Text style={{ color: colors.error }}>*</Text></Text>
             <Text style={[s.sublabel, { color: colors.textMuted }]}>MM / DD / YYYY</Text>
@@ -430,9 +450,8 @@ export default function PostScreen() {
           {/* Time */}
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.time = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.time = ref; }}
+            collapsable={false}
           >
             <Text style={[s.label, { color: colors.text }]}>Time Lost <Text style={{ color: colors.error }}>*</Text></Text>
             <Text style={[s.sublabel, { color: colors.textMuted }]}>HH : MM</Text>

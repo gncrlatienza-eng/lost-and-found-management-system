@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, Keyboard,
+  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, Keyboard, Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -26,7 +26,8 @@ export default function FoundScreen() {
     lost_item_name?: string;
   }>();
   const scrollRef = useRef<ScrollView>(null);
-  const sectionOffsets = useRef<Record<string, number>>({});
+  const scrollOffset = useRef(0);
+  const sectionRefs = useRef<Record<string, View | null>>({});
   const focusedSection = useRef<string | null>(null);
 
   const [description, setDescription] = useState('');
@@ -76,11 +77,12 @@ export default function FoundScreen() {
 
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      const nextKeyboardHeight = event.endCoordinates.height;
       setKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates.height);
+      setKeyboardHeight(nextKeyboardHeight);
 
       if (focusedSection.current) {
-        scrollToSection(focusedSection.current, true);
+        scrollToSection(focusedSection.current, nextKeyboardHeight);
       }
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
@@ -119,13 +121,33 @@ export default function FoundScreen() {
     return d;
   };
 
-  const scrollToSection = (section: string, keyboardReady = false) => {
+  const scrollToSection = (section: string, keyboardHeightOverride?: number) => {
     focusedSection.current = section;
-    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
-    const targetY = Math.max(0, (sectionOffsets.current[section] ?? 0) - topOffset);
+    const activeKeyboardHeight = keyboardHeightOverride ?? keyboardHeight;
+    if (activeKeyboardHeight <= 0) return;
+
+    const sectionRef = sectionRefs.current[section];
+    if (!sectionRef) return;
+
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: targetY, animated: true });
-    }, keyboardReady ? 60 : 180);
+      sectionRef.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get('window').height - activeKeyboardHeight;
+        const topLimit = insets.top + Spacing.sm;
+        const bottomLimit = keyboardTop - Spacing.sm;
+        const sectionBottom = y + height;
+        let targetY = scrollOffset.current;
+
+        if (sectionBottom > bottomLimit) {
+          targetY += sectionBottom - bottomLimit;
+        } else if (y < topLimit) {
+          targetY = Math.max(0, targetY - (topLimit - y));
+        }
+
+        if (Math.abs(targetY - scrollOffset.current) > 1) {
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
+        }
+      });
+    }, keyboardHeightOverride ? 60 : 0);
   };
 
   const pickImage = async () => {
@@ -378,6 +400,8 @@ export default function FoundScreen() {
             ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          onScroll={(event) => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
         >
 
           {lost_item_id ? (
@@ -395,9 +419,8 @@ export default function FoundScreen() {
 
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.description = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.description = ref; }}
+            collapsable={false}
           >
             <Text style={s.label}>Item Description <Text style={s.required}>*</Text></Text>
             <TextInput
@@ -413,9 +436,8 @@ export default function FoundScreen() {
 
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.location = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.location = ref; }}
+            collapsable={false}
           >
             <Text style={s.label}>Location Found <Text style={s.required}>*</Text></Text>
             <TextInput
@@ -430,9 +452,8 @@ export default function FoundScreen() {
 
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.date = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.date = ref; }}
+            collapsable={false}
           >
             <Text style={s.label}>Date Found <Text style={s.required}>*</Text></Text>
             <Text style={s.sublabel}>MM / DD / YYYY</Text>
@@ -475,9 +496,8 @@ export default function FoundScreen() {
 
           <View
             style={s.section}
-            onLayout={(event) => {
-              sectionOffsets.current.time = event.nativeEvent.layout.y;
-            }}
+            ref={(ref) => { sectionRefs.current.time = ref; }}
+            collapsable={false}
           >
             <Text style={s.label}>Time Found <Text style={s.required}>*</Text></Text>
             <Text style={s.sublabel}>HH : MM</Text>

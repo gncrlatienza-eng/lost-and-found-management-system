@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, Alert, ScrollView, Keyboard,
+  StyleSheet, KeyboardAvoidingView, Platform, Alert, ScrollView, Keyboard, Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,8 +22,8 @@ export default function ResetPasswordScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
-  const fieldOffsets = useRef<Record<string, number>>({});
-  const cardOffset = useRef(0);
+  const scrollOffset = useRef(0);
+  const fieldRefs = useRef<Record<string, View | null>>({});
   const focusedField = useRef<string | null>(null);
 
   const canSubmit = useMemo(() => {
@@ -41,11 +41,12 @@ export default function ResetPasswordScreen() {
 
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      const nextKeyboardHeight = event.endCoordinates.height;
       setKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates.height);
+      setKeyboardHeight(nextKeyboardHeight);
 
       if (focusedField.current) {
-        scrollToField(focusedField.current, true);
+        scrollToField(focusedField.current, nextKeyboardHeight);
       }
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
@@ -60,13 +61,33 @@ export default function ResetPasswordScreen() {
     };
   }, []);
 
-  const scrollToField = (field: string, keyboardReady = false) => {
+  const scrollToField = (field: string, keyboardHeightOverride?: number) => {
     focusedField.current = field;
-    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
-    const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[field] ?? 0) - topOffset);
+    const activeKeyboardHeight = keyboardHeightOverride ?? keyboardHeight;
+    if (activeKeyboardHeight <= 0) return;
+
+    const fieldRef = fieldRefs.current[field];
+    if (!fieldRef) return;
+
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: targetY, animated: true });
-    }, keyboardReady ? 60 : 180);
+      fieldRef.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get('window').height - activeKeyboardHeight;
+        const topLimit = insets.top + Spacing.sm;
+        const bottomLimit = keyboardTop - Spacing.sm;
+        const fieldBottom = y + height;
+        let targetY = scrollOffset.current;
+
+        if (fieldBottom > bottomLimit) {
+          targetY += fieldBottom - bottomLimit;
+        } else if (y < topLimit) {
+          targetY = Math.max(0, targetY - (topLimit - y));
+        }
+
+        if (Math.abs(targetY - scrollOffset.current) > 1) {
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
+        }
+      });
+    }, keyboardHeightOverride ? 60 : 0);
   };
 
   const handleResetPassword = async () => {
@@ -120,6 +141,8 @@ export default function ResetPasswordScreen() {
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onScroll={(event) => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
         >
           <View style={styles.header}>
             <View style={styles.logoBox}>
@@ -131,17 +154,11 @@ export default function ResetPasswordScreen() {
             </Text>
           </View>
 
-          <View
-            style={[styles.card, { backgroundColor: colors.surface }]}
-            onLayout={(event) => {
-              cardOffset.current = event.nativeEvent.layout.y;
-            }}
-          >
+          <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View
               style={styles.fieldGroup}
-              onLayout={(event) => {
-                fieldOffsets.current.password = event.nativeEvent.layout.y;
-              }}
+              ref={(ref) => { fieldRefs.current.password = ref; }}
+              collapsable={false}
             >
               <Text style={[styles.label, { color: colors.gray700 }]}>New Password</Text>
               <View style={[
@@ -173,9 +190,8 @@ export default function ResetPasswordScreen() {
 
             <View
               style={styles.fieldGroup}
-              onLayout={(event) => {
-                fieldOffsets.current.confirmPassword = event.nativeEvent.layout.y;
-              }}
+              ref={(ref) => { fieldRefs.current.confirmPassword = ref; }}
+              collapsable={false}
             >
               <Text style={[styles.label, { color: colors.gray700 }]}>Confirm Password</Text>
               <View style={[

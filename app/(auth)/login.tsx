@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard,
+  StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard, Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,8 +27,8 @@ export default function LoginScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
-  const fieldOffsets = useRef<Record<string, number>>({});
-  const cardOffset = useRef(0);
+  const scrollOffset = useRef(0);
+  const fieldRefs = useRef<Record<string, View | null>>({});
   const focusedField = useRef<string | null>(null);
 
   useEffect(() => {
@@ -37,11 +37,12 @@ export default function LoginScreen() {
 
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      const nextKeyboardHeight = event.endCoordinates.height;
       setKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates.height);
+      setKeyboardHeight(nextKeyboardHeight);
 
       if (focusedField.current) {
-        scrollToField(focusedField.current, true);
+        scrollToField(focusedField.current, nextKeyboardHeight);
       }
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
@@ -56,13 +57,33 @@ export default function LoginScreen() {
     };
   }, []);
 
-  const scrollToField = (field: string, keyboardReady = false) => {
+  const scrollToField = (field: string, keyboardHeightOverride?: number) => {
     focusedField.current = field;
-    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
-    const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[field] ?? 0) - topOffset);
+    const activeKeyboardHeight = keyboardHeightOverride ?? keyboardHeight;
+    if (activeKeyboardHeight <= 0) return;
+
+    const fieldRef = fieldRefs.current[field];
+    if (!fieldRef) return;
+
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: targetY, animated: true });
-    }, keyboardReady ? 60 : 180);
+      fieldRef.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get('window').height - activeKeyboardHeight;
+        const topLimit = insets.top + Spacing.sm;
+        const bottomLimit = keyboardTop - Spacing.sm;
+        const fieldBottom = y + height;
+        let targetY = scrollOffset.current;
+
+        if (fieldBottom > bottomLimit) {
+          targetY += fieldBottom - bottomLimit;
+        } else if (y < topLimit) {
+          targetY = Math.max(0, targetY - (topLimit - y));
+        }
+
+        if (Math.abs(targetY - scrollOffset.current) > 1) {
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
+        }
+      });
+    }, keyboardHeightOverride ? 60 : 0);
   };
 
   const clearError = (field: string) => {
@@ -168,10 +189,12 @@ export default function LoginScreen() {
           ]}
           onLayout={(event) => setContainerHeight(event.nativeEvent.layout.height)}
           onContentSizeChange={(_, height) => setContentHeight(height)}
+          onScroll={(event) => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
           keyboardShouldPersistTaps="handled"
           scrollEnabled={scrollEnabled}
           showsVerticalScrollIndicator={false}
           bounces={false}
+          scrollEventThrottle={16}
         >
           <View style={styles.content}>
             <View style={styles.header}>
@@ -182,20 +205,14 @@ export default function LoginScreen() {
               <Text style={styles.tagline}>Lost and Found · De La Salle Lipa</Text>
             </View>
 
-            <View
-              style={[styles.card, { backgroundColor: colors.surface }]}
-              onLayout={(event) => {
-                cardOffset.current = event.nativeEvent.layout.y;
-              }}
-            >
+            <View style={[styles.card, { backgroundColor: colors.surface }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Welcome back</Text>
               <Text style={[styles.cardSub, { color: colors.textSecondary }]}>Sign in with your DLSL email</Text>
 
               <View
                 style={styles.fieldGroup}
-                onLayout={(event) => {
-                  fieldOffsets.current.email = event.nativeEvent.layout.y;
-                }}
+                ref={(ref) => { fieldRefs.current.email = ref; }}
+                collapsable={false}
               >
                 <Text style={[styles.label, { color: colors.gray700 }]}>School Email</Text>
                 <View style={[
@@ -229,9 +246,8 @@ export default function LoginScreen() {
 
               <View
                 style={styles.fieldGroup}
-                onLayout={(event) => {
-                  fieldOffsets.current.password = event.nativeEvent.layout.y;
-                }}
+                ref={(ref) => { fieldRefs.current.password = ref; }}
+                collapsable={false}
               >
                 <Text style={[styles.label, { color: colors.gray700 }]}>Password</Text>
                 <View style={[

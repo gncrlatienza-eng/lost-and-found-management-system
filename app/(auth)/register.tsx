@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Keyboard,
+  StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Keyboard, Dimensions,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -45,17 +45,18 @@ export default function RegisterScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
-  const fieldOffsets = useRef<Record<string, number>>({});
-  const cardOffset = useRef(0);
+  const scrollOffset = useRef(0);
+  const fieldRefs = useRef<Record<string, View | null>>({});
   const focusedField = useRef<string | null>(null);
 
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      const nextKeyboardHeight = event.endCoordinates.height;
       setKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates.height);
+      setKeyboardHeight(nextKeyboardHeight);
 
       if (focusedField.current) {
-        scrollToField(focusedField.current, true);
+        scrollToField(focusedField.current, nextKeyboardHeight);
       }
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
@@ -76,13 +77,33 @@ export default function RegisterScreen() {
     return error;
   };
 
-  const scrollToField = (key: string, keyboardReady = false) => {
+  const scrollToField = (key: string, keyboardHeightOverride?: number) => {
     focusedField.current = key;
-    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
-    const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[key] ?? 0) - topOffset);
+    const activeKeyboardHeight = keyboardHeightOverride ?? keyboardHeight;
+    if (activeKeyboardHeight <= 0) return;
+
+    const fieldRef = fieldRefs.current[key];
+    if (!fieldRef) return;
+
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: targetY, animated: true });
-    }, keyboardReady ? 60 : 180);
+      fieldRef.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get('window').height - activeKeyboardHeight;
+        const topLimit = insets.top + Spacing.sm;
+        const bottomLimit = keyboardTop - Spacing.sm;
+        const fieldBottom = y + height;
+        let targetY = scrollOffset.current;
+
+        if (fieldBottom > bottomLimit) {
+          targetY += fieldBottom - bottomLimit;
+        } else if (y < topLimit) {
+          targetY = Math.max(0, targetY - (topLimit - y));
+        }
+
+        if (Math.abs(targetY - scrollOffset.current) > 1) {
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
+        }
+      });
+    }, keyboardHeightOverride ? 60 : 0);
   };
 
   const handleRegister = async () => {
@@ -144,6 +165,8 @@ export default function RegisterScreen() {
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onScroll={(event) => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
         >
           <TouchableOpacity style={styles.back} onPress={() => router.back()}>
             <ChevronLeft size={22} color={Colors.primary} />
@@ -153,19 +176,13 @@ export default function RegisterScreen() {
           <Text style={styles.title}>Create Account</Text>
           <Text style={styles.subtitle}>Join LAFMS with your DLSL credentials</Text>
 
-          <View
-            style={styles.card}
-            onLayout={(event) => {
-              cardOffset.current = event.nativeEvent.layout.y;
-            }}
-          >
+          <View style={styles.card}>
             {FIELDS.map(({ label, placeholder, key, icon: Icon, keyboard, secure }) => (
               <View
                 key={key}
                 style={styles.fieldGroup}
-                onLayout={(event) => {
-                  fieldOffsets.current[key] = event.nativeEvent.layout.y;
-                }}
+                ref={(ref) => { fieldRefs.current[key] = ref; }}
+                collapsable={false}
               >
                 <Text style={styles.label}>{label}</Text>
                 <View style={[
