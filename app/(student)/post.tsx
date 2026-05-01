@@ -118,7 +118,7 @@ export default function PostScreen() {
 
   const scrollToSection = (section: string, keyboardReady = false) => {
     focusedSection.current = section;
-    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.lg;
+    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
     const targetY = Math.max(0, (sectionOffsets.current[section] ?? 0) - topOffset);
     setTimeout(() => {
       scrollRef.current?.scrollTo({ y: targetY, animated: true });

@@ -350,10 +350,20 @@ export default function FoundItemsScreen() {
     },
     createBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
     filterScroll: { flexGrow: 0, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
-    filterContent: { paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm, gap: Spacing.sm },
-    filterPill: { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: Radius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+    filterContent: { paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
+    filterPill: {
+      minHeight: 36,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: 6,
+      borderRadius: Radius.full,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     filterPillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-    filterText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+    filterText: { fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.textSecondary },
     filterTextActive: { color: '#fff' },
     card: { backgroundColor: colors.surface, borderRadius: Radius.lg, marginBottom: Spacing.md, borderWidth: 1, borderColor: colors.border, overflow: 'hidden', elevation: 1 },
     cardImg: { width: '100%', height: 140 },
@@ -400,8 +410,18 @@ export default function FoundItemsScreen() {
     rejectBtnText: { fontSize: 14, fontWeight: '700', color: colors.error },
     approveBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: 14, borderRadius: Radius.md, backgroundColor: colors.success },
     approveBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
-    surrenderBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: 14, borderRadius: Radius.md, backgroundColor: '#F59E0B', marginBottom: Spacing.lg },
-    surrenderBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+    surrenderBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Spacing.sm,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: 14,
+      borderRadius: Radius.md,
+      backgroundColor: '#F59E0B',
+    },
+    surrenderBtnText: { flexShrink: 1, fontSize: 14, fontWeight: '700', color: '#fff', textAlign: 'center' },
     receivedBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: 14, borderRadius: Radius.md, backgroundColor: colors.success, marginBottom: Spacing.lg },
     receivedBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
     rejectForm: { gap: Spacing.md, marginBottom: Spacing.lg },
@@ -529,7 +549,7 @@ export default function FoundItemsScreen() {
           keyExtractor={i => i.id}
           renderItem={renderItem}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-          contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 100 }}
+          contentContainerStyle={{ padding: Spacing.xl, paddingBottom: Spacing.lg }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={s.empty}>

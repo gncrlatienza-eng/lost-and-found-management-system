@@ -168,7 +168,7 @@ export default function MatchingScreen() {
     header: { backgroundColor: colors.surface, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
     headerTitle: { fontSize: 20, fontWeight: '800', color: colors.text },
     headerSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-    scroll: { padding: Spacing.xl, paddingBottom: 100 },
+    scroll: { padding: Spacing.xl, paddingBottom: Spacing.lg },
     selectionBar: {
       flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
       backgroundColor: colors.primaryMuted, borderRadius: Radius.lg,

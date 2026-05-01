@@ -21,7 +21,7 @@ function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const [activityBadge, setActivityBadge] = useState(0);
 
-  const safeBottom = Math.max(insets.bottom, Spacing.sm);
+  const safeBottom = insets.bottom > 0 ? Spacing.lg : Spacing.sm;
 
   const fetchBadge = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -72,7 +72,7 @@ function TabBar({ state, navigation }: BottomTabBarProps) {
                   styles.fab,
                   {
                     backgroundColor: colors.primary,
-                    marginBottom: safeBottom > Spacing.sm ? safeBottom - 4 : 16,
+                    marginBottom: safeBottom > Spacing.sm ? safeBottom - Spacing.xs : 16,
                   },
                 ]}
               >

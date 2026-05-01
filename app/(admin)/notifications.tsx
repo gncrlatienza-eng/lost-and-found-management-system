@@ -135,7 +135,7 @@ export default function AdminNotificationsScreen() {
           keyExtractor={i => i.id}
           renderItem={renderItem}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-          contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 100 }}
+          contentContainerStyle={{ padding: Spacing.xl, paddingBottom: Spacing.lg }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={s.empty}>

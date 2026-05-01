@@ -381,7 +381,7 @@ export default function ClaimsScreen() {
           keyExtractor={i => i.id}
           renderItem={renderItem}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-          contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 100 }}
+          contentContainerStyle={{ padding: Spacing.xl, paddingBottom: Spacing.lg }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={s.empty}>

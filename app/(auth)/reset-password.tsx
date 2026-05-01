@@ -62,7 +62,7 @@ export default function ResetPasswordScreen() {
 
   const scrollToField = (field: string, keyboardReady = false) => {
     focusedField.current = field;
-    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.xl;
+    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
     const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[field] ?? 0) - topOffset);
     setTimeout(() => {
       scrollRef.current?.scrollTo({ y: targetY, animated: true });

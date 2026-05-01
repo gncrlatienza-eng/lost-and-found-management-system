@@ -78,7 +78,7 @@ export default function RegisterScreen() {
 
   const scrollToField = (key: string, keyboardReady = false) => {
     focusedField.current = key;
-    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.xl;
+    const topOffset = keyboardReady ? Spacing.lg : Spacing.md;
     const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[key] ?? 0) - topOffset);
     setTimeout(() => {
       scrollRef.current?.scrollTo({ y: targetY, animated: true });

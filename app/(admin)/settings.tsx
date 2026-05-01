@@ -48,7 +48,7 @@ export default function AdminSettingsScreen() {
       backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,
     },
     headerTitle: { fontSize: 22, fontWeight: '800', color: colors.text },
-    scroll: { paddingBottom: 100 },
+    scroll: { paddingBottom: Spacing.lg },
     avatarSection: {
       alignItems: 'center', paddingVertical: Spacing.xxxl,
       backgroundColor: colors.surface, marginBottom: Spacing.md,

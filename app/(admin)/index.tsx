@@ -106,7 +106,7 @@ export default function AdminDashboard() {
     headerTitle: { fontSize: 22, fontWeight: '800', color: colors.primary },
     adminBadge: { fontSize: 11, fontWeight: '700', color: colors.white, backgroundColor: colors.primary },
     headerSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-    scroll: { padding: Spacing.xl, paddingBottom: 100 },
+    scroll: { padding: Spacing.xl, paddingBottom: Spacing.lg },
     sectionLabel: { fontSize: 11, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: Spacing.sm },
     statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.xl },
     statCard: {
