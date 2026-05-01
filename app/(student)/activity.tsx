@@ -1,60 +1,65 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   RefreshControl, ActivityIndicator, Image, Modal, ScrollView,
   TextInput, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { MapPin, Calendar, AlertCircle, Camera, X, CheckCircle } from 'lucide-react-native';
+import { MapPin, Calendar, AlertCircle, Camera, X, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { useTheme } from '../../lib/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { Spacing, Radius } from '../../constants/theme';
+import PhotoViewerModal from '../../components/PhotoViewerModal';
 import type { LostItem, FoundReport } from '../../types';
 
 const FOUND_BUCKET = 'found-items';
+
+const LOST_STATUS: Record<string, { label: string; color: string; step: number }> = {
+  searching: { label: 'Searching', color: '#F59E0B', step: 0 },
+  possible_match: { label: 'Match Found', color: '#3B82F6', step: 1 },
+  ready_for_claiming: { label: 'Ready to Claim', color: '#10B981', step: 2 },
+  resolved: { label: 'Resolved', color: '#6B7280', step: 3 },
+  expired: { label: 'Expired', color: '#EF4444', step: 3 },
+};
+
+const FOUND_STATUS: Record<string, { label: string; color: string }> = {
+  pending_review: { label: 'Pending Review', color: '#F59E0B' },
+  approved: { label: 'Approved', color: '#10B981' },
+  waiting_submission: { label: 'Waiting Submission', color: '#3B82F6' },
+  submitted_to_sdfo: { label: 'Submitted to SDFO', color: '#8B5CF6' },
+  matched_to_owner: { label: 'Matched to Owner', color: '#06B6D4' },
+  resolved: { label: 'Resolved', color: '#6B7280' },
+  rejected: { label: 'Rejected', color: '#EF4444' },
+};
+
+const LOST_STEPS = ['Searching', 'Match Found', 'Ready to Claim', 'Resolved'];
+
+type ProofItem = { lostItem: LostItem; matchId: string };
+type SelectedReport =
+  | { kind: 'lost'; item: LostItem }
+  | { kind: 'found'; item: FoundReport }
+  | null;
 
 const resolvePhotoUrl = (uri: string): string => {
   if (!uri || uri.startsWith('http')) return uri;
   return supabase.storage.from(FOUND_BUCKET).getPublicUrl(uri).data.publicUrl;
 };
 
-const LOST_STATUS: Record<string, { label: string; color: string; step: number }> = {
-  searching:          { label: 'Searching',        color: '#F59E0B', step: 0 },
-  possible_match:     { label: 'Match Found',       color: '#3B82F6', step: 1 },
-  ready_for_claiming: { label: 'Ready to Claim',    color: '#10B981', step: 2 },
-  resolved:           { label: 'Resolved',          color: '#6B7280', step: 3 },
-  expired:            { label: 'Expired',           color: '#EF4444', step: 3 },
-};
-
-const FOUND_STATUS: Record<string, { label: string; color: string }> = {
-  pending_review:     { label: 'Pending Review',    color: '#F59E0B' },
-  approved:           { label: 'Approved',          color: '#10B981' },
-  waiting_submission: { label: 'Waiting Submission', color: '#3B82F6' },
-  submitted_to_sdfo:  { label: 'Submitted to SDFO', color: '#8B5CF6' },
-  matched_to_owner:   { label: 'Matched to Owner',  color: '#06B6D4' },
-  resolved:           { label: 'Resolved',          color: '#6B7280' },
-  rejected:           { label: 'Rejected',          color: '#EF4444' },
-};
-
-const LOST_STEPS = ['Searching', 'Match Found', 'Ready to Claim', 'Resolved'];
-
-type ProofItem = { lostItem: LostItem; matchId: string };
-
 export default function ActivityScreen() {
   const { colors } = useTheme();
-  const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
+  const { tab: tabParam, lostId, foundId } = useLocalSearchParams<{ tab?: string; lostId?: string; foundId?: string }>();
   const [tab, setTab] = useState<'lost' | 'found'>(tabParam === 'found' ? 'found' : 'lost');
-
-  useEffect(() => {
-    if (tabParam === 'found') setTab('found');
-  }, [tabParam]);
+  const autoOpenedTarget = useRef<string | null>(null);
   const [lostItems, setLostItems] = useState<LostItem[]>([]);
   const [foundReports, setFoundReports] = useState<FoundReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<SelectedReport>(null);
+  const [detailPhotoIndex, setDetailPhotoIndex] = useState(0);
+  const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
 
   const [proofItem, setProofItem] = useState<ProofItem | null>(null);
   const [proofPhotos, setProofPhotos] = useState<string[]>([]);
@@ -62,9 +67,19 @@ export default function ActivityScreen() {
   const [proofSubmitting, setProofSubmitting] = useState(false);
   const [proofSubmittedIds, setProofSubmittedIds] = useState<Set<string>>(new Set());
 
+  const detailMediaHeight = 240;
+
+  useEffect(() => {
+    if (tabParam === 'found') setTab('found');
+    if (tabParam === 'lost') setTab('lost');
+  }, [tabParam]);
+
   const fetchData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
     const [lost, found] = await Promise.all([
       supabase.from('lost_items').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
@@ -75,39 +90,99 @@ export default function ActivityScreen() {
     setLostItems(lostData);
     setFoundReports(found.data || []);
 
-    const possibleMatchIds = lostData.filter(i => i.status === 'possible_match').map(i => i.id);
-    if (possibleMatchIds.length > 0) {
-      const { data: matches } = await supabase
-        .from('matches').select('id, lost_item_id').in('lost_item_id', possibleMatchIds);
+    const possibleMatchIds = lostData.filter((item) => item.status === 'possible_match').map((item) => item.id);
 
-      if (matches && matches.length > 0) {
-        const mIds = matches.map((m: any) => m.id);
-        const { data: claims } = await supabase
-          .from('claims').select('match_id').in('match_id', mIds).not('proof_photos', 'is', null);
-
-        if (claims && claims.length > 0) {
-          const submittedMatchIds = new Set(claims.map((c: any) => c.match_id));
-          const submittedLostIds = new Set(
-            (matches as any[]).filter((m: any) => submittedMatchIds.has(m.id)).map((m: any) => m.lost_item_id)
-          );
-          setProofSubmittedIds(submittedLostIds as Set<string>);
-        } else {
-          setProofSubmittedIds(new Set());
-        }
-      }
+    if (possibleMatchIds.length === 0) {
+      setProofSubmittedIds(new Set());
+      setLoading(false);
+      return;
     }
 
+    const { data: matches } = await supabase
+      .from('matches')
+      .select('id, lost_item_id')
+      .in('lost_item_id', possibleMatchIds);
+
+    if (!matches || matches.length === 0) {
+      setProofSubmittedIds(new Set());
+      setLoading(false);
+      return;
+    }
+
+    const matchIds = matches.map((match: any) => match.id);
+    const { data: claims } = await supabase
+      .from('claims')
+      .select('match_id')
+      .in('match_id', matchIds)
+      .not('proof_photos', 'is', null);
+
+    if (!claims || claims.length === 0) {
+      setProofSubmittedIds(new Set());
+      setLoading(false);
+      return;
+    }
+
+    const submittedMatchIds = new Set(claims.map((claim: any) => claim.match_id));
+    const submittedLostIds = new Set(
+      (matches as any[])
+        .filter((match: any) => submittedMatchIds.has(match.id))
+        .map((match: any) => match.lost_item_id)
+    );
+
+    setProofSubmittedIds(submittedLostIds as Set<string>);
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  const onRefresh = async () => { setRefreshing(true); await fetchData(); setRefreshing(false); };
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  useEffect(() => {
+    if (lostId) {
+      const targetKey = `lost:${lostId}`;
+      if (autoOpenedTarget.current === targetKey) return;
+
+      const match = lostItems.find((item) => item.id === lostId);
+      if (match) {
+        autoOpenedTarget.current = targetKey;
+        setTab('lost');
+        setDetailPhotoIndex(0);
+        setSelectedReport({ kind: 'lost', item: match });
+      }
+      return;
+    }
+
+    if (foundId) {
+      const targetKey = `found:${foundId}`;
+      if (autoOpenedTarget.current === targetKey) return;
+
+      const match = foundReports.find((item) => item.id === foundId);
+      if (match) {
+        autoOpenedTarget.current = targetKey;
+        setTab('found');
+        setDetailPhotoIndex(0);
+        setSelectedReport({ kind: 'found', item: match });
+      }
+    }
+  }, [foundId, foundReports, lostId, lostItems]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+  };
 
   const openProofModal = async (item: LostItem) => {
     const { data: matches } = await supabase
-      .from('matches').select('id').eq('lost_item_id', item.id)
-      .order('created_at', { ascending: false }).limit(1);
+      .from('matches')
+      .select('id')
+      .eq('lost_item_id', item.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
 
     const match = matches?.[0];
     if (!match) return Alert.alert('Not Ready', 'No match has been created yet. Please wait for the admin.');
@@ -120,10 +195,9 @@ export default function ActivityScreen() {
   const pickProofPhoto = async () => {
     if (proofPhotos.length >= 3) return Alert.alert('Max 3 photos for proof');
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-    if (!result.canceled) setProofPhotos(p => [...p, result.assets[0].uri]);
+    if (!result.canceled) setProofPhotos((current) => [...current, result.assets[0].uri]);
   };
 
-  // ✅ Same working pattern as post.tsx
   const uploadProofPhotos = async (userId: string): Promise<string[]> => {
     const urls: string[] = [];
     for (const uri of proofPhotos) {
@@ -136,17 +210,19 @@ export default function ActivityScreen() {
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
         const byteChars = atob(base64);
         const byteArray = new Uint8Array(byteChars.length);
-        for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+        for (let i = 0; i < byteChars.length; i += 1) byteArray[i] = byteChars.charCodeAt(i);
 
         const { error: uploadError } = await supabase.storage
           .from(FOUND_BUCKET)
           .upload(path, byteArray, { contentType: `image/${ext}`, upsert: true });
 
-        if (uploadError) { console.warn('[proof upload error]', uploadError.message); continue; }
+        if (uploadError) continue;
 
         const { data: urlData } = supabase.storage.from(FOUND_BUCKET).getPublicUrl(path);
         if (urlData?.publicUrl) urls.push(urlData.publicUrl);
-      } catch (err: any) { console.warn('[proof upload exception]', err.message); }
+      } catch {
+        continue;
+      }
     }
     return urls;
   };
@@ -167,14 +243,20 @@ export default function ActivityScreen() {
       let matchId = proofItem.matchId;
       if (!matchId) {
         const { data: matches } = await supabase
-          .from('matches').select('id').eq('lost_item_id', proofItem.lostItem.id)
-          .order('created_at', { ascending: false }).limit(1);
+          .from('matches')
+          .select('id')
+          .eq('lost_item_id', proofItem.lostItem.id)
+          .order('created_at', { ascending: false })
+          .limit(1);
         if (!matches?.[0]) throw new Error('Match not found. Please contact the SDFO.');
         matchId = matches[0].id;
       }
 
       const { data: existing } = await supabase
-        .from('claims').select('id').eq('match_id', matchId).maybeSingle();
+        .from('claims')
+        .select('id')
+        .eq('match_id', matchId)
+        .maybeSingle();
 
       let error;
       if (existing) {
@@ -198,19 +280,19 @@ export default function ActivityScreen() {
       const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin');
       if (admins && admins.length > 0) {
         await supabase.from('notifications').insert(
-          admins.map((a: any) => ({
-            user_id: a.id,
+          admins.map((admin: any) => ({
+            user_id: admin.id,
             type: 'proof_submitted',
             message: `A student submitted proof of ownership for "${proofItem.lostItem.name}". Please review in the Claims tab.`,
           }))
         );
       }
 
-      Alert.alert('Proof Submitted!', 'Your proof of ownership has been sent to the admin for review.');
+      Alert.alert('Proof Submitted', 'Your proof of ownership has been sent to the admin for review.');
       setProofItem(null);
       fetchData();
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
+    } catch (error: any) {
+      Alert.alert('Error', error?.message ?? 'Something went wrong. Please try again.');
     } finally {
       setProofSubmitting(false);
     }
@@ -223,16 +305,45 @@ export default function ActivityScreen() {
         text: 'Yes, I have it',
         onPress: async () => {
           const { data: matches } = await supabase
-            .from('matches').select('id, found_report_id').eq('lost_item_id', item.id)
-            .order('created_at', { ascending: false }).limit(1);
+            .from('matches')
+            .select('id, found_report_id')
+            .eq('lost_item_id', item.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
           const match = matches?.[0];
           if (!match) return;
+
           await Promise.all([
             supabase.from('lost_items').update({ status: 'resolved' }).eq('id', item.id),
             supabase.from('matches').update({ status: 'resolved' }).eq('id', match.id),
             supabase.from('found_reports').update({ status: 'resolved' }).eq('id', match.found_report_id),
           ]);
-          Alert.alert('Resolved!', 'Great! Your case has been marked as resolved.');
+
+          if (selectedReport?.kind === 'lost' && selectedReport.item.id === item.id) {
+            setSelectedReport(null);
+            setPhotoViewerVisible(false);
+          }
+
+          Alert.alert('Resolved', 'Great! Your case has been marked as resolved.');
+          fetchData();
+        },
+      },
+    ]);
+  };
+
+  const confirmDeleteLostItem = (item: LostItem) => {
+    Alert.alert('Delete Post?', `Delete "${item.name}" from your activity?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.from('lost_items').delete().eq('id', item.id);
+          if (selectedReport?.kind === 'lost' && selectedReport.item.id === item.id) {
+            setSelectedReport(null);
+            setPhotoViewerVisible(false);
+          }
           fetchData();
         },
       },
@@ -258,14 +369,23 @@ export default function ActivityScreen() {
       borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
     },
     cardTop: { flexDirection: 'row', padding: Spacing.lg, gap: Spacing.md },
-    thumb: { width: 64, height: 64, borderRadius: Radius.sm, backgroundColor: colors.gray100 },
+    thumbWrap: {
+      width: 72,
+      height: 72,
+      borderRadius: Radius.sm,
+      backgroundColor: colors.gray100,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    thumb: { width: '100%', height: '100%' },
     cardInfo: { flex: 1 },
     cardName: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 4 },
     badge: { alignSelf: 'flex-start', paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.full, marginBottom: Spacing.sm },
     badgeText: { fontSize: 11, fontWeight: '700', color: '#fff' },
     meta: { flexDirection: 'row', gap: Spacing.md },
-    metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-    metaText: { fontSize: 11, color: colors.textSecondary },
+    metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3, flex: 1 },
+    metaText: { fontSize: 11, color: colors.textSecondary, flexShrink: 1 },
     stepBar: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
     stepRow: { flexDirection: 'row', alignItems: 'center' },
     stepDot: { width: 10, height: 10, borderRadius: 5 },
@@ -281,9 +401,9 @@ export default function ActivityScreen() {
     editRow: { flexDirection: 'row', gap: Spacing.sm, padding: Spacing.md, paddingTop: 0 },
     editBtn: { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.sm, alignItems: 'center', borderWidth: 1 },
     editBtnText: { fontSize: 13, fontWeight: '600' },
-    empty: { alignItems: 'center', marginTop: 60, gap: Spacing.md },
-    emptyText: { fontSize: 16, fontWeight: '700', color: colors.text },
-    emptySub: { fontSize: 13, color: colors.textSecondary },
+    empty: { alignItems: 'center', justifyContent: 'center', flex: 1, gap: Spacing.md, paddingHorizontal: Spacing.xl },
+    emptyText: { fontSize: 16, fontWeight: '700', color: colors.text, textAlign: 'center' },
+    emptySub: { fontSize: 13, color: colors.textSecondary, textAlign: 'center' },
     actionBtn: {
       margin: Spacing.md, marginTop: 0,
       borderRadius: Radius.sm, paddingVertical: Spacing.sm, alignItems: 'center',
@@ -295,10 +415,112 @@ export default function ActivityScreen() {
       padding: Spacing.sm, borderRadius: Radius.sm, borderWidth: 1, borderColor: '#BFDBFE',
     },
     pendingProofText: { fontSize: 12, color: '#1D4ED8', flex: 1, fontWeight: '600' },
-    // ✅ Found report photo viewer
     photoStrip: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
     photoThumb: { width: 72, height: 72, borderRadius: Radius.sm, backgroundColor: colors.gray100 },
-    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+    detailOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+    detailSheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: Radius.xl,
+      borderTopRightRadius: Radius.xl,
+      maxHeight: '90%',
+    },
+    detailHandle: {
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.border,
+      alignSelf: 'center',
+      marginTop: Spacing.md,
+    },
+    detailCloseBtn: {
+      position: 'absolute',
+      top: Spacing.lg,
+      right: Spacing.lg,
+      zIndex: 10,
+    },
+    detailScroll: { paddingBottom: Spacing.xl },
+    detailMediaWrap: {
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    detailMedia: { width: '100%', height: '100%' },
+    detailCard: {
+      padding: Spacing.xl,
+    },
+    detailTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: Spacing.sm,
+      marginBottom: Spacing.md,
+    },
+    detailName: { flex: 1, fontSize: 24, fontWeight: '800', color: colors.text },
+    detailMeta: { gap: Spacing.sm, marginBottom: Spacing.lg },
+    detailMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    detailMetaText: { fontSize: 14, color: colors.textSecondary, flexShrink: 1 },
+    sectionLabel: {
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+      color: colors.textMuted,
+      marginBottom: 6,
+    },
+    detailDescription: { fontSize: 15, lineHeight: 24, color: colors.text, marginBottom: Spacing.lg },
+    tapHintWrap: {
+      position: 'absolute',
+      bottom: Spacing.sm,
+      alignSelf: 'center',
+      backgroundColor: 'rgba(0,0,0,0.45)',
+      borderRadius: Radius.full,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: 6,
+    },
+    tapHintText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+    detailDots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: Spacing.md },
+    detailDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(0,0,0,0.2)' },
+    detailDotActive: { width: 16, backgroundColor: colors.primary },
+    navBtn: {
+      position: 'absolute',
+      top: '45%',
+      backgroundColor: 'rgba(0,0,0,0.35)',
+      borderRadius: 20,
+      padding: 6,
+    },
+    infoBox: {
+      backgroundColor: colors.primaryMuted,
+      borderRadius: Radius.md,
+      padding: Spacing.md,
+      marginBottom: Spacing.lg,
+    },
+    infoText: { fontSize: 13, color: colors.primary, lineHeight: 20 },
+    detailActionRow: { flexDirection: 'row', gap: Spacing.md },
+    secondaryAction: {
+      flex: 1,
+      borderRadius: Radius.md,
+      paddingVertical: 14,
+      alignItems: 'center',
+      borderWidth: 1,
+    },
+    secondaryActionText: { fontSize: 14, fontWeight: '600' },
+    dangerAction: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+    primaryAction: {
+      borderRadius: Radius.md,
+      paddingVertical: 16,
+      alignItems: 'center',
+      marginTop: Spacing.sm,
+    },
+    primaryActionText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+    detailInfoBanner: {
+      backgroundColor: '#EFF6FF',
+      borderWidth: 1,
+      borderColor: '#BFDBFE',
+      borderRadius: Radius.md,
+      padding: Spacing.md,
+      marginTop: Spacing.sm,
+    },
+    detailInfoBannerText: { color: '#1D4ED8', fontSize: 14, fontWeight: '600', textAlign: 'center' },
     sheet: {
       backgroundColor: colors.surface,
       borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, maxHeight: '90%',
@@ -335,26 +557,28 @@ export default function ActivityScreen() {
     },
     submitBtnDisabled: { opacity: 0.5 },
     submitBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-    infoBox: { backgroundColor: colors.primaryMuted, borderRadius: Radius.md, padding: Spacing.md, marginBottom: Spacing.md },
-    infoText: { fontSize: 13, color: colors.primary, lineHeight: 20 },
+    emptyMediaText: { fontSize: 14, fontWeight: '600', color: colors.textMuted },
   });
 
   const renderLost = ({ item }: { item: LostItem }) => {
-    const st = LOST_STATUS[item.status] || LOST_STATUS.searching;
-    const step = st.step;
+    const status = LOST_STATUS[item.status] || LOST_STATUS.searching;
+    const step = status.step;
     const proofAlreadySubmitted = proofSubmittedIds.has(item.id);
 
     return (
-      <View style={s.card}>
+      <TouchableOpacity style={s.card} activeOpacity={0.92} onPress={() => { setSelectedReport({ kind: 'lost', item }); setDetailPhotoIndex(0); }}>
         <View style={s.cardTop}>
-          {item.photos?.[0]
-            ? <Image source={{ uri: item.photos[0] }} style={s.thumb} resizeMode="cover" />
-            : <View style={[s.thumb, { alignItems: 'center', justifyContent: 'center' }]}><Text style={{ fontSize: 28 }}>📦</Text></View>
-          }
+          <View style={s.thumbWrap}>
+            {item.photos?.[0] ? (
+              <Image source={{ uri: item.photos[0] }} style={s.thumb} resizeMode="cover" />
+            ) : (
+              <Text style={s.emptyMediaText}>No image</Text>
+            )}
+          </View>
           <View style={s.cardInfo}>
             <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
-            <View style={[s.badge, { backgroundColor: st.color }]}>
-              <Text style={s.badgeText}>{st.label}</Text>
+            <View style={[s.badge, { backgroundColor: status.color }]}>
+              <Text style={s.badgeText}>{status.label}</Text>
             </View>
             <View style={s.meta}>
               <View style={s.metaItem}>
@@ -369,78 +593,85 @@ export default function ActivityScreen() {
           </View>
         </View>
 
-        {item.status !== 'expired' && item.status !== 'resolved' && (
+        {item.status !== 'expired' && item.status !== 'resolved' ? (
           <View style={s.stepBar}>
             <View style={s.stepRow}>
-              {LOST_STEPS.map((_, i) => (
-                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', flex: i < LOST_STEPS.length - 1 ? 1 : 0 }}>
-                  <View style={[s.stepDot, { backgroundColor: i <= step ? colors.primary : colors.border }]} />
-                  {i < LOST_STEPS.length - 1 && <View style={[s.stepLine, { backgroundColor: i < step ? colors.primary : colors.border }]} />}
+              {LOST_STEPS.map((_, index) => (
+                <View key={index} style={{ flexDirection: 'row', alignItems: 'center', flex: index < LOST_STEPS.length - 1 ? 1 : 0 }}>
+                  <View style={[s.stepDot, { backgroundColor: index <= step ? colors.primary : colors.border }]} />
+                  {index < LOST_STEPS.length - 1 ? <View style={[s.stepLine, { backgroundColor: index < step ? colors.primary : colors.border }]} /> : null}
                 </View>
               ))}
             </View>
             <View style={s.stepLabels}>
-              {LOST_STEPS.map((l, i) => (
-                <Text key={i} style={[s.stepLabel, { color: i <= step ? colors.primary : colors.textMuted }]}>{l}</Text>
+              {LOST_STEPS.map((label, index) => (
+                <Text key={index} style={[s.stepLabel, { color: index <= step ? colors.primary : colors.textMuted }]}>{label}</Text>
               ))}
             </View>
           </View>
-        )}
+        ) : null}
 
-        {item.status === 'possible_match' && (
+        {item.status === 'possible_match' ? (
           proofAlreadySubmitted ? (
             <View style={s.pendingProofBox}>
               <CheckCircle size={14} color="#1D4ED8" />
-              <Text style={s.pendingProofText}>Proof submitted — awaiting admin review</Text>
+              <Text style={s.pendingProofText}>Proof submitted - awaiting admin review</Text>
             </View>
           ) : (
             <TouchableOpacity style={[s.actionBtn, { backgroundColor: '#3B82F6' }]} onPress={() => openProofModal(item)}>
               <Text style={s.actionBtnText}>Upload Proof of Ownership</Text>
             </TouchableOpacity>
           )
-        )}
+        ) : null}
 
-        {item.status === 'ready_for_claiming' && (
+        {item.status === 'ready_for_claiming' ? (
           <TouchableOpacity style={[s.actionBtn, { backgroundColor: '#10B981' }]} onPress={() => handleMarkResolved(item)}>
-            <Text style={s.actionBtnText}>I've Received My Item — Mark Resolved</Text>
+            <Text style={s.actionBtnText}>I've Received My Item - Mark Resolved</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
 
-        {item.status === 'searching' && (
+        {item.status === 'searching' ? (
           <View style={s.editRow}>
-            <TouchableOpacity style={[s.editBtn, { borderColor: colors.border }]}>
+            <TouchableOpacity
+              style={[s.editBtn, { borderColor: colors.border }]}
+              onPress={() => router.push({ pathname: '/(student)/post', params: { id: item.id } })}
+            >
               <Text style={[s.editBtnText, { color: colors.text }]}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.editBtn, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}
-              onPress={async () => { await supabase.from('lost_items').delete().eq('id', item.id); fetchData(); }}
+              onPress={() => confirmDeleteLostItem(item)}
             >
               <Text style={[s.editBtnText, { color: colors.error }]}>Delete</Text>
             </TouchableOpacity>
           </View>
-        )}
-      </View>
+        ) : null}
+      </TouchableOpacity>
     );
   };
 
   const renderFound = ({ item }: { item: FoundReport }) => {
-    const st = FOUND_STATUS[item.status] || FOUND_STATUS.pending_review;
+    const status = FOUND_STATUS[item.status] || FOUND_STATUS.pending_review;
+
     return (
-      <View style={s.card}>
+      <TouchableOpacity style={s.card} activeOpacity={0.92} onPress={() => { setSelectedReport({ kind: 'found', item }); setDetailPhotoIndex(0); }}>
         <View style={s.cardTop}>
-          {item.photos?.[0]
-            ? <Image source={{ uri: item.photos[0] }} style={s.thumb} resizeMode="cover" />
-            : <View style={[s.thumb, { alignItems: 'center', justifyContent: 'center' }]}><Text style={{ fontSize: 28 }}>🔍</Text></View>
-          }
+          <View style={s.thumbWrap}>
+            {item.photos?.[0] ? (
+              <Image source={{ uri: resolvePhotoUrl(item.photos[0]) }} style={s.thumb} resizeMode="cover" />
+            ) : (
+              <Text style={s.emptyMediaText}>No image</Text>
+            )}
+          </View>
           <View style={s.cardInfo}>
             <Text style={s.cardName} numberOfLines={2}>{item.item_description}</Text>
-            <View style={[s.badge, { backgroundColor: st.color }]}>
-              <Text style={s.badgeText}>{st.label}</Text>
+            <View style={[s.badge, { backgroundColor: status.color }]}>
+              <Text style={s.badgeText}>{status.label}</Text>
             </View>
             <View style={s.meta}>
               <View style={s.metaItem}>
                 <MapPin size={11} color={colors.textMuted} />
-                <Text style={s.metaText}>{item.location}</Text>
+                <Text style={s.metaText} numberOfLines={1}>{item.location}</Text>
               </View>
               <View style={s.metaItem}>
                 <Calendar size={11} color={colors.textMuted} />
@@ -450,24 +681,21 @@ export default function ActivityScreen() {
           </View>
         </View>
 
-        {/* ✅ Show photos strip for found reports */}
-        {item.photos && item.photos.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.photoStrip}>
-            {item.photos.map((url, i) => (
-              <Image key={i} source={{ uri: url }} style={s.photoThumb} resizeMode="cover" />
-            ))}
-          </ScrollView>
-        )}
-
-        {item.status === 'rejected' && item.rejection_reason && (
+        {item.status === 'rejected' && item.rejection_reason ? (
           <View style={s.rejectionBox}>
             <AlertCircle size={16} color="#991B1B" />
             <Text style={s.rejectionText}>Rejected: {item.rejection_reason}</Text>
           </View>
-        )}
-      </View>
+        ) : null}
+      </TouchableOpacity>
     );
   };
+
+  const selectedLostItem = selectedReport?.kind === 'lost' ? selectedReport.item : null;
+  const selectedFoundReport = selectedReport?.kind === 'found' ? selectedReport.item : null;
+  const selectedPhotos = selectedReport?.kind === 'found'
+    ? (selectedReport.item.photos ?? []).map(resolvePhotoUrl)
+    : (selectedReport?.item.photos ?? []);
 
   return (
     <SafeAreaView style={s.safe}>
@@ -494,41 +722,213 @@ export default function ActivityScreen() {
         tab === 'lost' ? (
           <FlatList
             data={lostItems}
-            keyExtractor={i => i.id}
+            keyExtractor={(item) => item.id}
             renderItem={renderLost}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 80, paddingTop: Spacing.sm }}
-            ListEmptyComponent={
+            contentContainerStyle={lostItems.length === 0 ? { flexGrow: 1, paddingTop: Spacing.sm, paddingBottom: Spacing.lg } : { paddingTop: Spacing.sm, paddingBottom: Spacing.lg }}
+            ListEmptyComponent={(
               <View style={s.empty}>
-                <Text style={{ fontSize: 48 }}>📋</Text>
                 <Text style={s.emptyText}>No lost posts yet</Text>
                 <Text style={s.emptySub}>Post a lost item from Home</Text>
               </View>
-            }
+            )}
           />
         ) : (
           <FlatList
             data={foundReports}
-            keyExtractor={i => i.id}
+            keyExtractor={(item) => item.id}
             renderItem={renderFound}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 80, paddingTop: Spacing.sm }}
-            ListEmptyComponent={
+            contentContainerStyle={foundReports.length === 0 ? { flexGrow: 1, paddingTop: Spacing.sm, paddingBottom: Spacing.lg } : { paddingTop: Spacing.sm, paddingBottom: Spacing.lg }}
+            ListEmptyComponent={(
               <View style={s.empty}>
-                <Text style={{ fontSize: 48 }}>🔍</Text>
                 <Text style={s.emptyText}>No found reports yet</Text>
                 <Text style={s.emptySub}>Submit a found report when you find something</Text>
               </View>
-            }
+            )}
           />
         )
       )}
 
+      <Modal
+        visible={!!selectedReport}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        presentationStyle="overFullScreen"
+        onRequestClose={() => setSelectedReport(null)}
+      >
+        <TouchableOpacity style={s.detailOverlay} activeOpacity={1} onPress={() => setSelectedReport(null)}>
+          <TouchableOpacity activeOpacity={1} style={s.detailSheet}>
+            <View style={s.detailHandle} />
+            <TouchableOpacity style={s.detailCloseBtn} onPress={() => setSelectedReport(null)}>
+              <X size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+
+            {selectedReport ? (
+              <ScrollView contentContainerStyle={s.detailScroll} showsVerticalScrollIndicator={false}>
+                <TouchableOpacity
+                  style={[s.detailMediaWrap, { backgroundColor: colors.gray100, height: detailMediaHeight }]}
+                  onPress={() => setPhotoViewerVisible(true)}
+                  activeOpacity={0.92}
+                >
+                  {selectedPhotos.length > 0 ? (
+                    <>
+                      <Image source={{ uri: selectedPhotos[detailPhotoIndex] }} style={s.detailMedia} resizeMode="cover" />
+                      {selectedPhotos.length > 1 ? (
+                        <>
+                          {detailPhotoIndex > 0 ? (
+                            <TouchableOpacity style={[s.navBtn, { left: Spacing.md }]} onPress={() => setDetailPhotoIndex((current) => current - 1)}>
+                              <ChevronLeft size={20} color="#fff" />
+                            </TouchableOpacity>
+                          ) : null}
+                          {detailPhotoIndex < selectedPhotos.length - 1 ? (
+                            <TouchableOpacity style={[s.navBtn, { right: Spacing.md }]} onPress={() => setDetailPhotoIndex((current) => current + 1)}>
+                              <ChevronRight size={20} color="#fff" />
+                            </TouchableOpacity>
+                          ) : null}
+                        </>
+                      ) : null}
+                      <View style={s.tapHintWrap}>
+                        <Text style={s.tapHintText}>Tap image to view full photo</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={s.emptyMediaText}>No image uploaded</Text>
+                  )}
+                </TouchableOpacity>
+
+                {selectedPhotos.length > 1 ? (
+                  <View style={s.detailDots}>
+                    {selectedPhotos.map((_, index) => (
+                      <View key={index} style={[s.detailDot, index === detailPhotoIndex && s.detailDotActive]} />
+                    ))}
+                  </View>
+                ) : null}
+
+                <View style={s.detailCard}>
+                  {selectedLostItem ? (
+                    <>
+                      <View style={s.detailTitleRow}>
+                        <Text style={s.detailName}>{selectedLostItem.name}</Text>
+                        <View style={[s.badge, { backgroundColor: LOST_STATUS[selectedLostItem.status]?.color || '#6B7280' }]}>
+                          <Text style={s.badgeText}>{LOST_STATUS[selectedLostItem.status]?.label || 'Searching'}</Text>
+                        </View>
+                      </View>
+
+                      <View style={s.detailMeta}>
+                        <View style={s.detailMetaRow}>
+                          <MapPin size={14} color={colors.primary} />
+                          <Text style={s.detailMetaText}>{selectedLostItem.location}</Text>
+                        </View>
+                        <View style={s.detailMetaRow}>
+                          <Calendar size={14} color={colors.primary} />
+                          <Text style={s.detailMetaText}>{new Date(selectedLostItem.date_time).toLocaleString()}</Text>
+                        </View>
+                      </View>
+
+                      <Text style={s.sectionLabel}>Description</Text>
+                      <Text style={s.detailDescription}>{selectedLostItem.description}</Text>
+
+                      {selectedLostItem.status === 'possible_match' && !proofSubmittedIds.has(selectedLostItem.id) ? (
+                        <View style={s.infoBox}>
+                          <Text style={s.infoText}>
+                            A possible match was found. Upload proof of ownership so the admin can review your claim.
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      {selectedLostItem.status === 'searching' ? (
+                        <View style={s.detailActionRow}>
+                          <TouchableOpacity
+                            style={[s.secondaryAction, { borderColor: colors.border }]}
+                            onPress={() => {
+                              setSelectedReport(null);
+                              router.push({ pathname: '/(student)/post', params: { id: selectedLostItem.id } });
+                            }}
+                          >
+                            <Text style={[s.secondaryActionText, { color: colors.text }]}>Edit Post</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[s.secondaryAction, s.dangerAction]}
+                            onPress={() => confirmDeleteLostItem(selectedLostItem)}
+                          >
+                            <Text style={[s.secondaryActionText, { color: colors.error }]}>Delete</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+
+                      {selectedLostItem.status === 'possible_match' ? (
+                        proofSubmittedIds.has(selectedLostItem.id) ? (
+                          <View style={s.detailInfoBanner}>
+                            <Text style={s.detailInfoBannerText}>Proof already submitted. Please wait for admin review.</Text>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={[s.primaryAction, { backgroundColor: '#3B82F6' }]}
+                            onPress={() => {
+                              setSelectedReport(null);
+                              openProofModal(selectedLostItem);
+                            }}
+                          >
+                            <Text style={s.primaryActionText}>Upload Proof of Ownership</Text>
+                          </TouchableOpacity>
+                        )
+                      ) : null}
+
+                      {selectedLostItem.status === 'ready_for_claiming' ? (
+                        <TouchableOpacity style={[s.primaryAction, { backgroundColor: '#10B981' }]} onPress={() => handleMarkResolved(selectedLostItem)}>
+                          <Text style={s.primaryActionText}>I've Received My Item - Mark Resolved</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {selectedFoundReport ? (
+                    <>
+                      <View style={s.detailTitleRow}>
+                        <Text style={s.detailName}>{selectedFoundReport.item_description}</Text>
+                        <View style={[s.badge, { backgroundColor: FOUND_STATUS[selectedFoundReport.status]?.color || '#6B7280' }]}>
+                          <Text style={s.badgeText}>{FOUND_STATUS[selectedFoundReport.status]?.label || 'Pending Review'}</Text>
+                        </View>
+                      </View>
+
+                      <View style={s.detailMeta}>
+                        <View style={s.detailMetaRow}>
+                          <MapPin size={14} color={colors.primary} />
+                          <Text style={s.detailMetaText}>{selectedFoundReport.location}</Text>
+                        </View>
+                        <View style={s.detailMetaRow}>
+                          <Calendar size={14} color={colors.primary} />
+                          <Text style={s.detailMetaText}>{new Date(selectedFoundReport.date_time).toLocaleString()}</Text>
+                        </View>
+                      </View>
+
+                      <Text style={s.sectionLabel}>Possession</Text>
+                      <Text style={s.detailDescription}>
+                        {selectedFoundReport.possession === 'with_student' ? 'Item is still with you.' : 'Item has been submitted to SDFO.'}
+                      </Text>
+
+                      {selectedFoundReport.status === 'rejected' && selectedFoundReport.rejection_reason ? (
+                        <>
+                          <Text style={s.sectionLabel}>Rejection Reason</Text>
+                          <Text style={s.detailDescription}>{selectedFoundReport.rejection_reason}</Text>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                </View>
+              </ScrollView>
+            ) : null}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal visible={!!proofItem} animationType="slide" transparent onRequestClose={() => setProofItem(null)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-          <View style={s.overlay}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
             <View style={s.sheet}>
               <View style={s.sheetHandle} />
               <View style={s.sheetHeader}>
@@ -540,31 +940,28 @@ export default function ActivityScreen() {
               <ScrollView style={s.sheetScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                 <View style={s.infoBox}>
                   <Text style={s.infoText}>
-                    Upload photos and a description proving this item belongs to you (e.g., receipt, serial number, unique markings).
-                    The admin will review and approve before you can claim your item.
+                    Upload photos and a description proving this item belongs to you (for example: receipt, serial number, or unique markings).
                   </Text>
                 </View>
 
                 <Text style={s.sheetLabel}>Proof Photos <Text style={{ color: colors.error }}>*</Text></Text>
                 <View style={s.photoRow}>
-                  {proofPhotos.map((uri, i) => (
-                    <View key={i} style={s.photoWrap}>
+                  {proofPhotos.map((uri, index) => (
+                    <View key={index} style={s.photoWrap}>
                       <Image source={{ uri }} style={s.photo} resizeMode="cover" />
-                      <TouchableOpacity style={s.removePhoto} onPress={() => setProofPhotos(p => p.filter((_, j) => j !== i))}>
+                      <TouchableOpacity style={s.removePhoto} onPress={() => setProofPhotos((current) => current.filter((_, i) => i !== index))}>
                         <X size={12} color="#fff" />
                       </TouchableOpacity>
                     </View>
                   ))}
-                  {proofPhotos.length < 3 && (
+                  {proofPhotos.length < 3 ? (
                     <TouchableOpacity style={s.addPhoto} onPress={pickProofPhoto}>
                       <Camera size={22} color={colors.textMuted} />
                       <Text style={s.addPhotoText}>Add Photo</Text>
                     </TouchableOpacity>
-                  )}
+                  ) : null}
                 </View>
-                <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: Spacing.md }}>
-                  {proofPhotos.length}/3 photos
-                </Text>
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: Spacing.md }}>{proofPhotos.length}/3 photos</Text>
 
                 <Text style={s.sheetLabel}>Ownership Description <Text style={{ color: colors.error }}>*</Text></Text>
                 <TextInput
@@ -581,15 +978,21 @@ export default function ActivityScreen() {
                   onPress={submitProof}
                   disabled={proofSubmitting}
                 >
-                  <Text style={s.submitBtnText}>
-                    {proofSubmitting ? 'Submitting...' : 'Submit Proof of Ownership'}
-                  </Text>
+                  <Text style={s.submitBtnText}>{proofSubmitting ? 'Submitting...' : 'Submit Proof of Ownership'}</Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <PhotoViewerModal
+        visible={photoViewerVisible}
+        photos={selectedPhotos}
+        index={detailPhotoIndex}
+        onClose={() => setPhotoViewerVisible(false)}
+        onIndexChange={setDetailPhotoIndex}
+      />
     </SafeAreaView>
   );
 }

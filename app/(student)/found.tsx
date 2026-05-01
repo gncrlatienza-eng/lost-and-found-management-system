@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal,
+  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { ChevronLeft, Camera, X, CheckCircle, ChevronDown } from 'lucide-react-native';
@@ -20,10 +20,14 @@ const FOUND_BUCKET = 'found-items';
 
 export default function FoundScreen() {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { lost_item_id, lost_item_name } = useLocalSearchParams<{
     lost_item_id?: string;
     lost_item_name?: string;
   }>();
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionOffsets = useRef<Record<string, number>>({});
+  const focusedSection = useRef<string | null>(null);
 
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
@@ -40,6 +44,8 @@ export default function FoundScreen() {
   const [ampm, setAmpm] = useState<'AM' | 'PM'>('AM');
   const [showAmPmDropdown, setShowAmPmDropdown] = useState(false);
   const [datetimeError, setDatetimeError] = useState('');
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const dayRef = useRef<TextInput>(null);
   const yearRef = useRef<TextInput>(null);
@@ -68,6 +74,27 @@ export default function FoundScreen() {
     return () => clearTimeout(t);
   }, [submitted]);
 
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates.height);
+
+      if (focusedSection.current) {
+        scrollToSection(focusedSection.current, true);
+      }
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+      focusedSection.current = null;
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   const buildDate = (): Date | null => {
     const mm = parseInt(month, 10);
     const dd = parseInt(day, 10);
@@ -90,6 +117,15 @@ export default function FoundScreen() {
     if (d > new Date()) return null;
     if (d < ONE_YEAR_AGO) return null;
     return d;
+  };
+
+  const scrollToSection = (section: string, keyboardReady = false) => {
+    focusedSection.current = section;
+    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.lg;
+    const targetY = Math.max(0, (sectionOffsets.current[section] ?? 0) - topOffset);
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
+    }, keyboardReady ? 60 : 180);
   };
 
   const pickImage = async () => {
@@ -193,7 +229,7 @@ export default function FoundScreen() {
       borderBottomWidth: 1, borderBottomColor: colors.border, gap: Spacing.md,
     },
     headerTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
-    scroll: { padding: Spacing.xl },
+    scrollContent: { padding: Spacing.xl },
     section: { marginBottom: Spacing.xl },
     label: { fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: Spacing.sm },
     sublabel: { fontSize: 11, color: colors.textMuted, marginBottom: Spacing.sm },
@@ -226,7 +262,7 @@ export default function FoundScreen() {
     photoHint: { fontSize: 12, color: colors.textMuted, marginTop: Spacing.sm },
     submitBtn: {
       backgroundColor: colors.primary, borderRadius: Radius.md,
-      paddingVertical: 16, alignItems: 'center', marginBottom: Spacing.xl,
+      paddingVertical: 16, alignItems: 'center',
     },
     submitBtnDisabled: { opacity: 0.6 },
     submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
@@ -324,8 +360,25 @@ export default function FoundScreen() {
         <Text style={s.headerTitle}>Submit Found Item</Text>
       </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <ScrollView style={s.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'android' ? 20 : 0}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={[
+            s.scrollContent,
+              {
+                paddingBottom: keyboardVisible
+                  ? keyboardHeight + Math.max(insets.bottom, Spacing.sm)
+                  : Math.max(insets.bottom, Spacing.md),
+              },
+            ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
 
           {lost_item_id ? (
             <View style={s.linkedBox}>
@@ -340,7 +393,12 @@ export default function FoundScreen() {
             </View>
           )}
 
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.description = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={s.label}>Item Description <Text style={s.required}>*</Text></Text>
             <TextInput
               style={[s.input, s.textarea]}
@@ -349,10 +407,16 @@ export default function FoundScreen() {
               value={description}
               onChangeText={setDescription}
               multiline
+              onFocus={() => scrollToSection('description')}
             />
           </View>
 
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.location = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={s.label}>Location Found <Text style={s.required}>*</Text></Text>
             <TextInput
               style={s.input}
@@ -360,10 +424,16 @@ export default function FoundScreen() {
               placeholderTextColor={colors.textMuted}
               value={location}
               onChangeText={setLocation}
+              onFocus={() => scrollToSection('location')}
             />
           </View>
 
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.date = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={s.label}>Date Found <Text style={s.required}>*</Text></Text>
             <Text style={s.sublabel}>MM / DD / YYYY</Text>
             <View style={s.dateRow}>
@@ -376,6 +446,7 @@ export default function FoundScreen() {
                   setMonth(clean); setDatetimeError('');
                   if (clean.length === 2) dayRef.current?.focus();
                 }}
+                onFocus={() => scrollToSection('date')}
               />
               <Text style={[s.dateSep, { color: colors.textMuted }]}>/</Text>
               <TextInput
@@ -388,6 +459,7 @@ export default function FoundScreen() {
                   setDay(clean); setDatetimeError('');
                   if (clean.length === 2) yearRef.current?.focus();
                 }}
+                onFocus={() => scrollToSection('date')}
               />
               <Text style={[s.dateSep, { color: colors.textMuted }]}>/</Text>
               <TextInput
@@ -396,11 +468,17 @@ export default function FoundScreen() {
                 placeholder="YYYY" placeholderTextColor={colors.textMuted}
                 value={year} keyboardType="numeric" maxLength={4}
                 onChangeText={v => { setYear(v.replace(/\D/g, '').slice(0, 4)); setDatetimeError(''); }}
+                onFocus={() => scrollToSection('date')}
               />
             </View>
           </View>
 
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.time = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={s.label}>Time Found <Text style={s.required}>*</Text></Text>
             <Text style={s.sublabel}>HH : MM</Text>
             <View style={s.timeRow}>
@@ -413,6 +491,7 @@ export default function FoundScreen() {
                   setHour(clean); setDatetimeError('');
                   if (clean.length === 2) minuteRef.current?.focus();
                 }}
+                onFocus={() => scrollToSection('time')}
               />
               <Text style={[s.dateSep, { color: colors.textMuted }]}>:</Text>
               <TextInput
@@ -421,6 +500,7 @@ export default function FoundScreen() {
                 placeholder="MM" placeholderTextColor={colors.textMuted}
                 value={minute} keyboardType="numeric" maxLength={2}
                 onChangeText={v => { setMinute(v.replace(/\D/g, '').slice(0, 2)); setDatetimeError(''); }}
+                onFocus={() => scrollToSection('time')}
               />
               <TouchableOpacity
                 style={[s.ampmBtn, { backgroundColor: colors.surface, borderColor: datetimeError ? colors.error : colors.border }]}

@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, FlatList,
+  ScrollView, KeyboardAvoidingView, Platform, Image, Alert, Modal, FlatList, Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -23,8 +23,12 @@ const pad = (v: string) => v.replace(/\D/g, '').slice(0, 2);
 
 export default function PostScreen() {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const isEdit = !!id;
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionOffsets = useRef<Record<string, number>>({});
+  const focusedSection = useRef<string | null>(null);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -44,6 +48,8 @@ export default function PostScreen() {
   const [minute, setMinute] = useState('');
   const [ampm, setAmpm] = useState<'AM' | 'PM'>('AM');
   const [showAmPmDropdown, setShowAmPmDropdown] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   // Refs for auto-focus
   const dayRef = useRef<TextInput>(null);
@@ -79,6 +85,27 @@ export default function PostScreen() {
     });
   }, [id]);
 
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates.height);
+
+      if (focusedSection.current) {
+        scrollToSection(focusedSection.current, true);
+      }
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+      focusedSection.current = null;
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   const resetForm = () => {
     setName(''); setDescription(''); setCategory('');
     setLocation(''); setMonth(''); setDay(''); setYear('');
@@ -88,6 +115,15 @@ export default function PostScreen() {
 
   const clearError = (field: string) =>
     setErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
+
+  const scrollToSection = (section: string, keyboardReady = false) => {
+    focusedSection.current = section;
+    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.lg;
+    const targetY = Math.max(0, (sectionOffsets.current[section] ?? 0) - topOffset);
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
+    }, keyboardReady ? 60 : 180);
+  };
 
   // Build a Date from the fields, returns null if invalid
   const buildDate = (): Date | null => {
@@ -229,11 +265,33 @@ export default function PostScreen() {
         </Text>
       </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <ScrollView style={s.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'android' ? 20 : 0}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={[
+            s.scrollContent,
+              {
+                paddingBottom: keyboardVisible
+                  ? keyboardHeight + Math.max(insets.bottom, Spacing.sm)
+                  : Math.max(insets.bottom, Spacing.md),
+              },
+            ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
 
           {/* Item Name */}
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.name = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={[s.label, { color: colors.text }]}>Item Name <Text style={{ color: colors.error }}>*</Text></Text>
             <TextInput
               style={[s.input, { backgroundColor: colors.surface, borderColor: errors.name ? colors.error : colors.border, color: colors.text }]}
@@ -241,6 +299,7 @@ export default function PostScreen() {
               placeholderTextColor={colors.textMuted}
               value={name}
               onChangeText={v => { setName(v); clearError('name'); }}
+              onFocus={() => scrollToSection('name')}
             />
             {errors.name && <Text style={[s.errorText, { color: colors.error }]}>{errors.name}</Text>}
           </View>
@@ -266,7 +325,12 @@ export default function PostScreen() {
           </View>
 
           {/* Description */}
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.description = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={[s.label, { color: colors.text }]}>Description <Text style={{ color: colors.error }}>*</Text></Text>
             <TextInput
               style={[s.input, s.textarea, { backgroundColor: colors.surface, borderColor: errors.description ? colors.error : colors.border, color: colors.text }]}
@@ -275,12 +339,18 @@ export default function PostScreen() {
               value={description}
               onChangeText={v => { setDescription(v); clearError('description'); }}
               multiline
+              onFocus={() => scrollToSection('description')}
             />
             {errors.description && <Text style={[s.errorText, { color: colors.error }]}>{errors.description}</Text>}
           </View>
 
           {/* Location */}
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.location = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={[s.label, { color: colors.text }]}>Location Lost <Text style={{ color: colors.error }}>*</Text></Text>
             <TextInput
               style={[s.input, { backgroundColor: colors.surface, borderColor: errors.location ? colors.error : colors.border, color: colors.text }]}
@@ -288,12 +358,18 @@ export default function PostScreen() {
               placeholderTextColor={colors.textMuted}
               value={location}
               onChangeText={v => { setLocation(v); clearError('location'); }}
+              onFocus={() => scrollToSection('location')}
             />
             {errors.location && <Text style={[s.errorText, { color: colors.error }]}>{errors.location}</Text>}
           </View>
 
           {/* Date */}
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.date = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={[s.label, { color: colors.text }]}>Date Lost <Text style={{ color: colors.error }}>*</Text></Text>
             <Text style={[s.sublabel, { color: colors.textMuted }]}>MM / DD / YYYY</Text>
             <View style={s.dateRow}>
@@ -311,6 +387,7 @@ export default function PostScreen() {
                   clearError('datetime');
                   if (clean.length === 2) dayRef.current?.focus();
                 }}
+                onFocus={() => scrollToSection('date')}
               />
               <Text style={[s.dateSep, { color: colors.textMuted }]}>/</Text>
               {/* Day */}
@@ -328,6 +405,7 @@ export default function PostScreen() {
                   clearError('datetime');
                   if (clean.length === 2) yearRef.current?.focus();
                 }}
+                onFocus={() => scrollToSection('date')}
               />
               <Text style={[s.dateSep, { color: colors.textMuted }]}>/</Text>
               {/* Year */}
@@ -344,12 +422,18 @@ export default function PostScreen() {
                   setYear(clean);
                   clearError('datetime');
                 }}
+                onFocus={() => scrollToSection('date')}
               />
             </View>
           </View>
 
           {/* Time */}
-          <View style={s.section}>
+          <View
+            style={s.section}
+            onLayout={(event) => {
+              sectionOffsets.current.time = event.nativeEvent.layout.y;
+            }}
+          >
             <Text style={[s.label, { color: colors.text }]}>Time Lost <Text style={{ color: colors.error }}>*</Text></Text>
             <Text style={[s.sublabel, { color: colors.textMuted }]}>HH : MM</Text>
             <View style={s.timeRow}>
@@ -367,6 +451,7 @@ export default function PostScreen() {
                   clearError('datetime');
                   if (clean.length === 2) minuteRef.current?.focus();
                 }}
+                onFocus={() => scrollToSection('time')}
               />
               <Text style={[s.dateSep, { color: colors.textMuted }]}>:</Text>
               {/* Minute */}
@@ -383,6 +468,7 @@ export default function PostScreen() {
                   setMinute(clean);
                   clearError('datetime');
                 }}
+                onFocus={() => scrollToSection('time')}
               />
               {/* AM/PM Dropdown */}
               <TouchableOpacity
@@ -485,7 +571,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, gap: Spacing.md,
   },
   headerTitle: { fontSize: 18, fontWeight: '700' },
-  scroll: { padding: Spacing.xl },
+  scrollContent: { padding: Spacing.xl },
   section: { marginBottom: Spacing.xl },
   label: { fontSize: 13, fontWeight: '600', marginBottom: 2 },
   sublabel: { fontSize: 11, marginBottom: Spacing.sm },
@@ -546,7 +632,7 @@ const s = StyleSheet.create({
   hint: { fontSize: 12, marginTop: 4 },
   submitBtn: {
     borderRadius: Radius.md, paddingVertical: 16,
-    alignItems: 'center', marginBottom: Spacing.xxxl,
+    alignItems: 'center',
   },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },

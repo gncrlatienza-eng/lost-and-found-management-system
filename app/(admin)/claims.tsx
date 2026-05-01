@@ -12,6 +12,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 import { Spacing, Radius } from '../../constants/theme';
+import { attachNotificationTarget } from '../../lib/notificationTargets';
 
 interface ClaimRow {
   id: string;
@@ -118,7 +119,10 @@ export default function ClaimsScreen() {
         supabase.from('notifications').insert({
           user_id: selected.lost_item.user_id,
           type: 'ready_for_claiming',
-          message: `Your proof of ownership for "${selected.lost_item.name}" has been approved! You may now claim your item. Schedule: ${scheduleStr}`,
+          message: attachNotificationTarget(
+            `Your proof of ownership for "${selected.lost_item.name}" has been approved! You may now claim your item. Schedule: ${scheduleStr}`,
+            { kind: 'lost', id: selected.lost_item.id }
+          ),
         }),
       ]);
       Alert.alert('Approved!', 'Proof approved. Student has been notified with the claiming schedule.');
@@ -142,7 +146,10 @@ export default function ClaimsScreen() {
               supabase.from('found_reports').update({ status: 'resolved' }).eq('id', selected.found_report.id),
               supabase.from('notifications').insert({
                 user_id: selected.lost_item.user_id, type: 'resolved',
-                message: `Your lost item "${selected.lost_item.name}" has been successfully claimed and resolved!`,
+                message: attachNotificationTarget(
+                  `Your lost item "${selected.lost_item.name}" has been successfully claimed and resolved!`,
+                  { kind: 'lost', id: selected.lost_item.id }
+                ),
               }),
             ];
             if (selected.claim) {

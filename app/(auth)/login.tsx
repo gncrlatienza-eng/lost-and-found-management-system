@@ -1,33 +1,146 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { Colors, Spacing, Radius } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
+import { getResetPasswordRedirectUrl } from '../../lib/authRedirect';
 
 export default function LoginScreen() {
   const { colors, isDark, toggle } = useTheme();
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [resetNotice, setResetNotice] = useState('');
+  const [scrollEnabled, setScrollEnabled] = useState(false);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
+  const fieldOffsets = useRef<Record<string, number>>({});
+  const cardOffset = useRef(0);
+  const focusedField = useRef<string | null>(null);
+
+  useEffect(() => {
+    setScrollEnabled(keyboardVisible || contentHeight > containerHeight + 12);
+  }, [containerHeight, contentHeight, keyboardVisible]);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates.height);
+
+      if (focusedField.current) {
+        scrollToField(focusedField.current, true);
+      }
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+      focusedField.current = null;
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const scrollToField = (field: string, keyboardReady = false) => {
+    focusedField.current = field;
+    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.xl;
+    const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[field] ?? 0) - topOffset);
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
+    }, keyboardReady ? 60 : 180);
+  };
+
+  const clearError = (field: string) => {
+    setErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const validateLogin = () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    const nextErrors: Record<string, string> = {};
+
+    if (!trimmedEmail) nextErrors.email = 'Enter your DLSL school email.';
+    else if (!trimmedEmail.endsWith('@dlsl.edu.ph')) nextErrors.email = 'Use your @dlsl.edu.ph email.';
+
+    if (!password.trim()) nextErrors.password = 'Enter your password.';
+
+    setErrors(nextErrors);
+    return {
+      isValid: Object.keys(nextErrors).length === 0,
+      trimmedEmail,
+    };
+  };
 
   const handleLogin = async () => {
-    if (!email || !password) return;
+    const { isValid, trimmedEmail } = validateLogin();
+    setResetNotice('');
+    if (!isValid) return;
+
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
       if (error) throw error;
-      // ✅ No routing here — _layout.tsx handles all routing after role is fetched
-    } catch (err: any) {
-      alert(err.message);
+    } catch (error: any) {
+      Alert.alert('Sign In Failed', error?.message ?? 'Unable to sign in right now.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (!trimmedEmail) {
+      setErrors((current) => ({
+        ...current,
+        email: 'Enter your DLSL email first so we know where to send the reset link.',
+      }));
+      return;
+    }
+
+    if (!trimmedEmail.endsWith('@dlsl.edu.ph')) {
+      setErrors((current) => ({
+        ...current,
+        email: 'Use your @dlsl.edu.ph email for password recovery.',
+      }));
+      return;
+    }
+
+    setSendingReset(true);
+    setResetNotice('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: getResetPasswordRedirectUrl(),
+      });
+      if (error) throw error;
+
+      setResetNotice('Reset instructions were sent to your school email.');
+    } catch (error: any) {
+      Alert.alert('Reset Failed', error?.message ?? 'Unable to send a reset email right now.');
+    } finally {
+      setSendingReset(false);
     }
   };
 
@@ -38,94 +151,150 @@ export default function LoginScreen() {
         style={StyleSheet.absoluteFill}
       />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}
         style={styles.flex}
       >
         <ScrollView
-          contentContainerStyle={styles.scroll}
+          ref={scrollRef}
+          contentContainerStyle={[
+            styles.scroll,
+            keyboardVisible && styles.scrollKeyboard,
+            {
+              paddingBottom: keyboardVisible
+                ? keyboardHeight + Spacing.xl
+                : Spacing.xxxl + Math.max(insets.bottom, Spacing.md),
+            },
+          ]}
+          onLayout={(event) => setContainerHeight(event.nativeEvent.layout.height)}
+          onContentSizeChange={(_, height) => setContentHeight(height)}
           keyboardShouldPersistTaps="handled"
+          scrollEnabled={scrollEnabled}
           showsVerticalScrollIndicator={false}
+          bounces={false}
         >
-          <View style={styles.header}>
-            <View style={styles.logoBox}>
-              <Text style={styles.logoText}>L</Text>
-            </View>
-            <Text style={styles.appName}>LAFMS</Text>
-            <Text style={styles.tagline}>Lost and Found · De La Salle Lipa</Text>
-          </View>
-
-          {/* Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Welcome back</Text>
-            <Text style={[styles.cardSub, { color: colors.textSecondary }]}>Sign in with your DLSL email</Text>
-
-            {/* Email */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.gray700 }]}>School Email</Text>
-              <View style={[styles.inputRow, { backgroundColor: colors.gray100, borderColor: colors.border }]}>
-                <TextInput
-                  style={[styles.input, { color: colors.text }]}
-                  placeholder="you@dlsl.edu.ph"
-                  placeholderTextColor={colors.textMuted}
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoComplete="email"
-                />
+          <View style={styles.content}>
+            <View style={styles.header}>
+              <View style={styles.logoBox}>
+                <Text style={styles.logoText}>L</Text>
               </View>
+              <Text style={styles.appName}>LAFMS</Text>
+              <Text style={styles.tagline}>Lost and Found · De La Salle Lipa</Text>
             </View>
 
-            {/* Password */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.gray700 }]}>Password</Text>
-              <View style={[styles.inputRow, { backgroundColor: colors.gray100, borderColor: colors.border }]}>
-                <TextInput
-                  style={[styles.input, { color: colors.text }]}
-                  placeholder="••••••••"
-                  placeholderTextColor={colors.textMuted}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="password"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(p => !p)}>
-                  <Text style={styles.showText}>{showPassword ? 'Hide' : 'Show'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <TouchableOpacity style={styles.forgotRow}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </TouchableOpacity>
-
-            {/* Login button */}
-            <TouchableOpacity
-              style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
-              onPress={handleLogin}
-              disabled={loading}
-              activeOpacity={0.9}
+            <View
+              style={[styles.card, { backgroundColor: colors.surface }]}
+              onLayout={(event) => {
+                cardOffset.current = event.nativeEvent.layout.y;
+              }}
             >
-              <Text style={styles.loginBtnText}>
-                {loading ? 'Signing in...' : 'Sign In'}
+              <Text style={[styles.cardTitle, { color: colors.text }]}>Welcome back</Text>
+              <Text style={[styles.cardSub, { color: colors.textSecondary }]}>Sign in with your DLSL email</Text>
+
+              <View
+                style={styles.fieldGroup}
+                onLayout={(event) => {
+                  fieldOffsets.current.email = event.nativeEvent.layout.y;
+                }}
+              >
+                <Text style={[styles.label, { color: colors.gray700 }]}>School Email</Text>
+                <View style={[
+                  styles.inputRow,
+                  {
+                    backgroundColor: colors.gray100,
+                    borderColor: errors.email ? colors.error : colors.border,
+                  },
+                ]}>
+                  <TextInput
+                    style={[styles.input, { color: colors.text }]}
+                    placeholder="you@dlsl.edu.ph"
+                    placeholderTextColor={colors.textMuted}
+                    value={email}
+                    onChangeText={(value) => {
+                      setEmail(value);
+                      clearError('email');
+                      setResetNotice('');
+                    }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    autoCorrect={false}
+                    selectionColor={colors.primary}
+                    cursorColor={colors.primary}
+                    onFocus={() => scrollToField('email')}
+                  />
+                </View>
+                {errors.email ? <Text style={[styles.errorText, { color: colors.error }]}>{errors.email}</Text> : null}
+              </View>
+
+              <View
+                style={styles.fieldGroup}
+                onLayout={(event) => {
+                  fieldOffsets.current.password = event.nativeEvent.layout.y;
+                }}
+              >
+                <Text style={[styles.label, { color: colors.gray700 }]}>Password</Text>
+                <View style={[
+                  styles.inputRow,
+                  {
+                    backgroundColor: colors.gray100,
+                    borderColor: errors.password ? colors.error : colors.border,
+                  },
+                ]}>
+                  <TextInput
+                    style={[styles.input, { color: colors.text }]}
+                    placeholder="Enter your password"
+                    placeholderTextColor={colors.textMuted}
+                    value={password}
+                    onChangeText={(value) => {
+                      setPassword(value);
+                      clearError('password');
+                    }}
+                    secureTextEntry={!showPassword}
+                    autoComplete="password"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    selectionColor={colors.primary}
+                    cursorColor={colors.primary}
+                    onFocus={() => scrollToField('password')}
+                  />
+                  <TouchableOpacity onPress={() => setShowPassword((current) => !current)}>
+                    <Text style={styles.showText}>{showPassword ? 'Hide' : 'Show'}</Text>
+                  </TouchableOpacity>
+                </View>
+                {errors.password ? <Text style={[styles.errorText, { color: colors.error }]}>{errors.password}</Text> : null}
+              </View>
+
+              <TouchableOpacity style={styles.forgotRow} onPress={handleForgotPassword} disabled={sendingReset}>
+                <Text style={styles.forgotText}>{sendingReset ? 'Sending reset link...' : 'Forgot password?'}</Text>
+              </TouchableOpacity>
+              {resetNotice ? <Text style={[styles.successText, { color: colors.primary }]}>{resetNotice}</Text> : null}
+
+              <TouchableOpacity
+                style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+                onPress={handleLogin}
+                disabled={loading}
+                activeOpacity={0.9}
+              >
+                <Text style={styles.loginBtnText}>
+                  {loading ? 'Signing in...' : 'Sign In'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.registerRow}>
+              <Text style={styles.registerText}>Don't have an account? </Text>
+              <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
+                <Text style={styles.registerLink}>Register</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={toggle} style={styles.themeToggle}>
+              <Text style={styles.themeToggleText}>
+                {isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
               </Text>
             </TouchableOpacity>
           </View>
-
-          {/* Register */}
-          <View style={styles.registerRow}>
-            <Text style={styles.registerText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-              <Text style={styles.registerLink}>Register</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Theme toggle */}
-          <TouchableOpacity onPress={toggle} style={styles.themeToggle}>
-            <Text style={styles.themeToggleText}>
-              {isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            </Text>
-          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -141,7 +310,15 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xxxl,
     justifyContent: 'center',
   },
-
+  scrollKeyboard: {
+    justifyContent: 'flex-start',
+    paddingTop: Spacing.xl,
+  },
+  content: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+  },
   header: {
     alignItems: 'center',
     marginBottom: Spacing.xxxl,
@@ -173,7 +350,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     letterSpacing: 0.2,
   },
-
   card: {
     backgroundColor: Colors.white,
     borderRadius: Radius.xl,
@@ -195,7 +371,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginBottom: Spacing.xxl,
   },
-
   fieldGroup: { marginBottom: Spacing.lg },
   label: {
     fontSize: 13,
@@ -219,10 +394,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.text,
   },
-
-  forgotRow: { alignItems: 'flex-end', marginBottom: Spacing.xl, marginTop: -4 },
+  errorText: { fontSize: 12, marginTop: 4, fontWeight: '500' },
+  forgotRow: { alignItems: 'flex-end', marginBottom: Spacing.sm, marginTop: -4 },
   forgotText: { fontSize: 13, color: Colors.primary, fontWeight: '500' },
-
+  successText: { fontSize: 12, marginBottom: Spacing.lg, fontWeight: '600' },
   loginBtn: {
     backgroundColor: Colors.primary,
     borderRadius: Radius.md,
@@ -238,7 +413,6 @@ const styles = StyleSheet.create({
   loginBtnText: { color: Colors.white, fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
   showText: { color: Colors.primary, fontWeight: '600', fontSize: 13 },
   logoText: { color: Colors.white, fontSize: 28, fontWeight: '900' },
-
   registerRow: {
     flexDirection: 'row',
     justifyContent: 'center',

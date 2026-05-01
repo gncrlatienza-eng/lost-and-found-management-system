@@ -8,6 +8,7 @@ import { GitMerge, MapPin, Calendar, X, ChevronLeft, ChevronRight, Check } from 
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 import { Spacing, Radius } from '../../constants/theme';
+import { attachNotificationTarget } from '../../lib/notificationTargets';
 import type { LostItem, FoundReport } from '../../types';
 
 const FOUND_BUCKET = 'found-items';
@@ -86,11 +87,17 @@ export default function MatchingScreen() {
                 supabase.from('found_reports').update({ status: 'matched_to_owner' }).eq('id', selectedFound.id),
                 supabase.from('notifications').insert({
                   user_id: selectedLost.user_id, type: 'match_found',
-                  message: `A possible match has been found for your lost item: ${selectedLost.name}. SDFO will contact you shortly.`,
+                  message: attachNotificationTarget(
+                    `A possible match has been found for your lost item: ${selectedLost.name}. SDFO will contact you shortly.`,
+                    { kind: 'lost', id: selectedLost.id }
+                  ),
                 }),
                 supabase.from('notifications').insert({
                   user_id: selectedFound.user_id, type: 'match_found',
-                  message: `Your found report has been matched to a lost item. Thank you for helping!`,
+                  message: attachNotificationTarget(
+                    `Your found report for "${selectedFound.item_description}" has been matched to a lost item. Thank you for helping!`,
+                    { kind: 'found', id: selectedFound.id }
+                  ),
                 }),
               ]);
 

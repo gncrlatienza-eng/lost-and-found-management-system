@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { ThemeProvider, useTheme } from '../lib/ThemeContext';
 import { StatusBar } from 'expo-status-bar';
+import { createSessionFromRedirectUrl, getAuthRedirectParams } from '../lib/authRedirect';
 
 function ThemedApp() {
   const { isDark } = useTheme();
@@ -18,8 +20,11 @@ function ThemedApp() {
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [role, setRole] = useState<'student' | 'admin' | null>(null);
+  const [isRecoveringPassword, setIsRecoveringPassword] = useState(false);
   const router = useRouter();
   const segments = useSegments();
+  const incomingUrl = Linking.useURL();
+  const [firstSegment, secondSegment] = segments as string[];
 
   useEffect(() => {
     // Get initial session
@@ -29,14 +34,43 @@ export default function RootLayout() {
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (_e === 'PASSWORD_RECOVERY') {
+        setIsRecoveringPassword(true);
+      }
+
       setSession(session);
       if (!session) {
         setRole(null);
+        setIsRecoveringPassword(false);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!incomingUrl) return;
+
+    const handleIncomingAuthUrl = async () => {
+      const { type } = getAuthRedirectParams(incomingUrl);
+
+      if (type === 'recovery') {
+        setIsRecoveringPassword(true);
+      }
+
+      try {
+        await createSessionFromRedirectUrl(incomingUrl);
+
+        if (type === 'recovery') {
+          router.replace('/(auth)/reset-password');
+        }
+      } catch (error: any) {
+        console.error('Auth redirect handling failed:', error?.message ?? error);
+      }
+    };
+
+    handleIncomingAuthUrl();
+  }, [incomingUrl, router]);
 
   // Fetch role whenever session changes
   useEffect(() => {
@@ -64,12 +98,19 @@ export default function RootLayout() {
 
   // Handle routing based on session + role
   useEffect(() => {
+    if (isRecoveringPassword) {
+      if (firstSegment !== '(auth)' || secondSegment !== 'reset-password') {
+        router.replace('/(auth)/reset-password');
+      }
+      return;
+    }
+
     if (session === undefined) return;       // still loading
     if (session && role === null) return;    // session exists but role not fetched yet
 
-    const inAuth    = segments[0] === '(auth)';
-    const inAdmin   = segments[0] === '(admin)';
-    const inStudent = segments[0] === '(student)';
+    const inAuth = firstSegment === '(auth)';
+    const inAdmin = firstSegment === '(admin)';
+    const inStudent = firstSegment === '(student)';
 
     if (!session) {
       // Not logged in — send to login
@@ -82,7 +123,7 @@ export default function RootLayout() {
       if (!inStudent) router.replace('/(student)/');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, role]);
+  }, [firstSegment, isRecoveringPassword, role, router, secondSegment, session]);
 
   return (
     <ThemeProvider>

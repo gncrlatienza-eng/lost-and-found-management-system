@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Switch, Alert, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import {
   User, Mail, Phone, Hash, LogOut, Moon, Sun, Edit3, Check, X,
 } from 'lucide-react-native';
@@ -20,11 +21,7 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [stats, setStats] = useState({ lost: 0, found: 0, resolved: 0 });
 
-  useEffect(() => {
-    fetchUser();
-  }, []);
-
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) return;
     const { data } = await supabase.from('users').select('*').eq('id', authUser.id).single();
@@ -35,7 +32,17 @@ export default function ProfileScreen() {
     ]);
     const { count: resolved } = await supabase.from('lost_items').select('*', { count: 'exact', head: true }).eq('user_id', authUser.id).eq('status', 'resolved');
     setStats({ lost: lost.count || 0, found: found.count || 0, resolved: resolved || 0 });
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchUser();
+    }, [fetchUser])
+  );
 
   const saveProfile = async () => {
     if (!user) return;
@@ -59,7 +66,7 @@ export default function ProfileScreen() {
 
   const s = StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.background },
-    scroll: { paddingBottom: 100 },
+    scroll: { paddingBottom: Spacing.xl },
     header: {
       paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
       backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Keyboard,
 } from 'react-native';
 import { router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Mail, Lock, User, Phone, Hash, ChevronLeft, AlertCircle } from 'lucide-react-native';
 import { Colors, Spacing, Radius } from '../../constants/theme';
@@ -12,8 +12,12 @@ import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
 interface Field {
-  label: string; placeholder: string; key: string;
-  icon: any; keyboard?: any; secure?: boolean;
+  label: string;
+  placeholder: string;
+  key: string;
+  icon: any;
+  keyboard?: any;
+  secure?: boolean;
 }
 
 const FIELDS: Field[] = [
@@ -21,32 +25,67 @@ const FIELDS: Field[] = [
   { label: 'Full Name', placeholder: 'Juan Dela Cruz', key: 'name', icon: User },
   { label: 'School Email', placeholder: 'you@dlsl.edu.ph', key: 'email', icon: Mail, keyboard: 'email-address' },
   { label: 'Contact Number', placeholder: '09XX XXX XXXX', key: 'contact', icon: Phone, keyboard: 'phone-pad' },
-  { label: 'Password', placeholder: '••••••••', key: 'password', icon: Lock, secure: true },
+  { label: 'Password', placeholder: 'Enter your password', key: 'password', icon: Lock, secure: true },
 ];
 
-// Validation rules per field
 const VALIDATORS: Record<string, (v: string) => string | null> = {
-  student_id: v => /^\d+$/.test(v.trim()) ? null : 'Student ID must be numbers only', // ← changed
-  name: v => v.trim().length >= 2 ? null : 'Enter your full name',
-  email: v => v.endsWith('@dlsl.edu.ph') ? null : 'Must be a @dlsl.edu.ph email',
-  contact: v => /^09\d{9}$/.test(v.replace(/\s/g, '')) ? null : 'Must be 09XXXXXXXXX (11 digits)',
-  password: v => v.length >= 8 ? null : 'Password must be at least 8 characters',
+  student_id: (v) => /^\d+$/.test(v.trim()) ? null : 'Student ID must be numbers only',
+  name: (v) => v.trim().length >= 2 ? null : 'Enter your full name',
+  email: (v) => v.trim().toLowerCase().endsWith('@dlsl.edu.ph') ? null : 'Must be a @dlsl.edu.ph email',
+  contact: (v) => /^09\d{9}$/.test(v.replace(/\s/g, '')) ? null : 'Must be 09XXXXXXXXX (11 digits)',
+  password: (v) => v.length >= 8 ? null : 'Password must be at least 8 characters',
 };
 
 export default function RegisterScreen() {
   const { isDark, toggle } = useTheme();
+  const insets = useSafeAreaInsets();
   const [form, setForm] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
+  const fieldOffsets = useRef<Record<string, number>>({});
+  const cardOffset = useRef(0);
+  const focusedField = useRef<string | null>(null);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates.height);
+
+      if (focusedField.current) {
+        scrollToField(focusedField.current, true);
+      }
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+      focusedField.current = null;
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const validateField = (key: string, value: string) => {
     const error = VALIDATORS[key]?.(value) ?? null;
-    setErrors(e => ({ ...e, [key]: error ?? '' }));
+    setErrors((current) => ({ ...current, [key]: error ?? '' }));
     return error;
   };
 
+  const scrollToField = (key: string, keyboardReady = false) => {
+    focusedField.current = key;
+    const topOffset = keyboardReady ? Spacing.xxxl : Spacing.xl;
+    const targetY = Math.max(0, cardOffset.current + (fieldOffsets.current[key] ?? 0) - topOffset);
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
+    }, keyboardReady ? 60 : 180);
+  };
+
   const handleRegister = async () => {
-    // Validate all fields
     const newErrors: Record<string, string> = {};
     let hasError = false;
 
@@ -57,7 +96,10 @@ export default function RegisterScreen() {
         hasError = true;
       } else {
         const error = VALIDATORS[field.key]?.(value);
-        if (error) { newErrors[field.key] = error; hasError = true; }
+        if (error) {
+          newErrors[field.key] = error;
+          hasError = true;
+        }
       }
     }
 
@@ -68,7 +110,7 @@ export default function RegisterScreen() {
     setLoading(true);
     try {
       const { error } = await supabase.auth.signUp({
-        email,
+        email: email.trim().toLowerCase(),
         password,
         options: { data: { student_id, name, contact, role: 'student' } },
       });
@@ -85,9 +127,24 @@ export default function RegisterScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: isDark ? '#0F0F1A' : Colors.white }]}>
       <LinearGradient colors={isDark ? ['#0F0F1A', '#0F0F1A'] : ['#FFFFFF', '#F0FAF6']} style={StyleSheet.absoluteFill} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}
+        style={styles.flex}
+      >
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={[
+            styles.scroll,
+            {
+              paddingBottom: keyboardVisible
+                ? keyboardHeight + Spacing.xl
+                : Spacing.giant + Math.max(insets.bottom, Spacing.lg),
+            },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <TouchableOpacity style={styles.back} onPress={() => router.back()}>
             <ChevronLeft size={22} color={Colors.primary} />
             <Text style={styles.backText}>Back</Text>
@@ -96,9 +153,20 @@ export default function RegisterScreen() {
           <Text style={styles.title}>Create Account</Text>
           <Text style={styles.subtitle}>Join LAFMS with your DLSL credentials</Text>
 
-          <View style={styles.card}>
+          <View
+            style={styles.card}
+            onLayout={(event) => {
+              cardOffset.current = event.nativeEvent.layout.y;
+            }}
+          >
             {FIELDS.map(({ label, placeholder, key, icon: Icon, keyboard, secure }) => (
-              <View key={key} style={styles.fieldGroup}>
+              <View
+                key={key}
+                style={styles.fieldGroup}
+                onLayout={(event) => {
+                  fieldOffsets.current[key] = event.nativeEvent.layout.y;
+                }}
+              >
                 <Text style={styles.label}>{label}</Text>
                 <View style={[
                   styles.inputRow,
@@ -110,14 +178,16 @@ export default function RegisterScreen() {
                     placeholder={placeholder}
                     placeholderTextColor={Colors.textMuted}
                     value={form[key] || ''}
-                    onChangeText={v => {
-                      setForm(f => ({ ...f, [key]: v }));
-                      if (errors[key]) validateField(key, v); // live revalidate after first error
+                    onChangeText={(value) => {
+                      setForm((current) => ({ ...current, [key]: value }));
+                      if (errors[key]) validateField(key, value);
                     }}
                     onBlur={() => validateField(key, form[key] || '')}
+                    onFocus={() => scrollToField(key)}
                     keyboardType={keyboard || 'default'}
                     secureTextEntry={secure}
                     autoCapitalize={key === 'email' || key === 'password' ? 'none' : 'words'}
+                    autoCorrect={false}
                   />
                 </View>
                 {errors[key] ? (
@@ -146,7 +216,6 @@ export default function RegisterScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Theme toggle */}
           <TouchableOpacity onPress={toggle} style={styles.themeToggle}>
             <Text style={styles.themeToggleText}>
               {isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
@@ -161,7 +230,7 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.white },
   flex: { flex: 1 },
-  scroll: { flexGrow: 1, paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xxxl },
+  scroll: { flexGrow: 1, paddingHorizontal: Spacing.xl },
   back: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.lg, marginBottom: Spacing.xxl, gap: 4 },
   backText: { color: Colors.primary, fontSize: 15, fontWeight: '500' },
   title: { fontSize: 28, fontWeight: '800', color: Colors.text, marginBottom: 4 },

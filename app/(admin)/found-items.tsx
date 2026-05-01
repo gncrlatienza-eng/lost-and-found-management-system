@@ -15,6 +15,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 import { Spacing, Radius } from '../../constants/theme';
+import { attachNotificationTarget } from '../../lib/notificationTargets';
 
 const FILTERS = ['all', 'approved', 'rejected'] as const;
 type Filter = typeof FILTERS[number];
@@ -155,7 +156,10 @@ export default function FoundItemsScreen() {
       await supabase.from('notifications').insert({
         user_id: selected.user_id,
         type: 'found_approved',
-        message: 'Your found item report has been approved by SDFO.',
+        message: attachNotificationTarget(
+          `Your found report for "${selected.item_description}" has been approved by SDFO.`,
+          { kind: 'found', id: selected.id }
+        ),
       });
       Alert.alert('Approved', 'Found report approved and student notified.');
       setSelected(null); fetchReports();
@@ -171,7 +175,10 @@ export default function FoundItemsScreen() {
       await supabase.from('notifications').insert({
         user_id: selected.user_id,
         type: 'found_rejected',
-        message: `Your found report was rejected. Reason: ${rejectReason.trim()}`,
+        message: attachNotificationTarget(
+          `Your found report for "${selected.item_description}" was rejected. Reason: ${rejectReason.trim()}`,
+          { kind: 'found', id: selected.id }
+        ),
       });
       Alert.alert('Rejected', 'Found report has been rejected.');
       setSelected(null); setRejecting(false); setRejectReason(''); fetchReports();
@@ -195,7 +202,10 @@ export default function FoundItemsScreen() {
               await supabase.from('notifications').insert({
                 user_id: selected.user_id,
                 type: 'surrender_requested',
-                message: 'Please submit the found item to the SDFO office so we can proceed with matching.',
+                message: attachNotificationTarget(
+                  `Please submit "${selected.item_description}" to the SDFO office so we can proceed with matching.`,
+                  { kind: 'found', id: selected.id }
+                ),
               });
               Alert.alert('Request Sent', 'Student has been notified to surrender the item.');
               setSelected(null); fetchReports();
@@ -219,7 +229,10 @@ export default function FoundItemsScreen() {
       await supabase.from('notifications').insert({
         user_id: selected.user_id,
         type: 'item_received',
-        message: 'SDFO has confirmed receipt of the found item. Matching process will begin shortly.',
+        message: attachNotificationTarget(
+          `SDFO has confirmed receipt of "${selected.item_description}". Matching process will begin shortly.`,
+          { kind: 'found', id: selected.id }
+        ),
       });
       Alert.alert('Received', 'Item marked as received. It is now available for matching.');
       setSelected(null); fetchReports();
